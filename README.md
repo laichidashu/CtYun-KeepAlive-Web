@@ -69,6 +69,9 @@
 ### 方式一：双击启动（Windows）
 双击项目根目录的 **`启动服务.bat`**，按 `Ctrl+C` 停止。
 
+脚本会按顺序查找解释器：项目内置 `.venv` → 系统 `python` → `py -3` 启动器。
+若本机尚未安装 Python 3.10+，请到 [python.org](https://www.python.org/downloads/) 下载，**安装时务必勾选 "Add python.exe to PATH"**。
+
 ### 方式二：命令行启动（Windows / Linux / macOS 通用）
 ```bash
 # 需要 Python 3.10+（零第三方依赖）
@@ -78,7 +81,7 @@ python backend/server.py
 
 打开 `http://localhost:8080`，默认访问密码 `admin`（登录后请立即在「设置」里修改）。
 
-> 若要使用定时任务 / 积分兑换，还需任务脚本的运行环境：`pip install DrissionPage ddddocr requests pillow`（浏览器任务另需 Chromium）。登录后在「设置 → 环境自检」可查看缺失项与修复命令。
+> 若要使用定时任务 / 积分兑换，还需任务脚本的运行环境：`pip install -r requirements.txt`（即 `DrissionPage ddddocr requests`；浏览器任务另需 Chromium）。登录后在「设置 → 环境自检」可查看缺失项与修复命令。
 
 > 首次使用可复制示例配置快速起步：`accounts.example.json` → `accounts.json`、`jobs.example.json` → `jobs.json`、`redeem_config.example.json` → `redeem_config.json`（或直接登录 Web 控制台在界面上添加账号/任务）。
 
