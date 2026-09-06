@@ -172,3 +172,12 @@ python backend/server.py
 2. 定时任务脚本需要 `DrissionPage`/`ddddocr`/`requests`/`pillow` 与 Chromium——完整版镜像已内置，本地裸跑请自行安装。
 3. 平台页面结构（弹窗、按钮、验证码样式）可能随版本更新变化，届时需对应调整脚本选择器。
 4. 保活与自动化操作请遵守天翼云服务条款，仅建议在小规模个人账号上使用。
+
+---
+
+## 🙏 致谢
+
+本项目的实现借鉴了以下开源项目，感谢原作者的分享：
+
+- [leleji/CtYun](https://github.com/leleji/CtYun) —— 天翼云客户端接口与保活协议的参考实现；
+- [keaidang/CtYun-KeepAlive-Web](https://github.com/keaidang/CtYun-KeepAlive-Web) —— 多账号网页保活管理器的整体思路与 Web 架构参考。
