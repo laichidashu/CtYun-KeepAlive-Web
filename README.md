@@ -69,8 +69,10 @@
 ### 方式一：双击启动（Windows）
 双击项目根目录的 **`启动服务.bat`**，按 `Ctrl+C` 停止。
 
-脚本会按顺序查找解释器：项目内置 `.venv` → 系统 `python` → `py -3` 启动器。
-若本机尚未安装 Python 3.10+，请到 [python.org](https://www.python.org/downloads/) 下载，**安装时务必勾选 "Add python.exe to PATH"**。
+启动脚本会自动完成三步，全部就绪后才开始运行服务：
+1. **定位解释器**：项目内置 `.venv` → 系统 `python` → `py -3` 启动器；未安装 Python 时给出下载指引（**安装时务必勾选 "Add python.exe to PATH"**）
+2. **创建虚拟环境**：无 `.venv` 时自动创建，依赖隔离不污染系统 Python
+3. **环境自检 + 自动装依赖**：运行 `backend/bootstrap.py` 检查 `requests / pillow / DrissionPage / ddddocr`，缺失项自动 `pip` 安装（默认源失败自动换清华镜像），安装复检通过才启动服务
 
 ### 方式二：命令行启动（Windows / Linux / macOS 通用）
 ```bash
