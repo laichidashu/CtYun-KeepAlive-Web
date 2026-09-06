@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "desktopId": "22465014",
+  "prodId": 17024101,
+  "prodName": "1G数据盘永久扩容",
+  "prodType": "pointsdiskupgrade",
+  "costPoints": 1200,
+  "maxRedeemTimes": 0,
+  "lastRedeemDate": "",
+  "scheduleType": "monthly_days",
+  "intervalDays": 1,
+  "monthlyDays": [-1]
+}

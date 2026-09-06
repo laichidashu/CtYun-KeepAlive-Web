@@ -1,0 +1,17 @@
+[
+  {
+    "id": "example-ai-chat-001",
+    "name": "每日AI对话",
+    "type": "ai_chat",
+    "cron": "0 10,20 * * *",
+    "enabled": true,
+    "accountUser": "13800000000",
+    "timeoutMinutes": 15,
+    "hangSeconds": 4800,
+    "randomDaily": true,
+    "lastRunAt": "",
+    "nextRunAt": "",
+    "lastResult": "",
+    "running": false
+  }
+]

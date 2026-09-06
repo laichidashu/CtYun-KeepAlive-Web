@@ -1,0 +1,40 @@
+# ===== 敏感数据（绝不入库）=====
+# 账号密码与运行参数（含 Web 管理密码）
+accounts.json
+accounts.json.bak
+# 会话 Cookie（登录凭证）
+ctyun_cookies_*.json
+# 设备码
+devices/
+.devicecode_*
+ctyun_restart_at
+# 定时任务与历史（含手机号）
+jobs.json
+jobs.json.bak
+jobs_history.json
+jobs_history.json.bak
+# 兑换配置（含云电脑 ID）
+redeem_config.json
+redeem_config.json.bak
+
+# ===== 运行产物 =====
+logs/
+*.log
+*.png
+*.jpg
+*.jpeg
+*.tmp
+*.bak
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

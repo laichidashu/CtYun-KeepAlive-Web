@@ -1,0 +1,29 @@
+{
+  "accounts": [
+    {
+      "user": "13800000000",
+      "password": "你的密码",
+      "name": "我的账号",
+      "deviceCode": ""
+    }
+  ],
+  "adminPassword": "admin",
+  "keepAliveSeconds": 60,
+  "sessionRestartMinutes": 1440,
+  "minHealthySessionSeconds": 60,
+  "bootWaitRounds": 10,
+  "bootWaitSecondsPerRound": 60,
+  "pollIntervalSeconds": 15,
+  "browserMutexMode": "Global",
+  "aiChatTimeoutMinutes": 15,
+  "pcHangSeconds": 4800,
+  "pcHangTimeoutMinutes": 120,
+  "logHistorySize": 500,
+  "pythonExecutable": "",
+  "scriptsDir": "",
+  "feishuWebhook": "",
+  "feishuSecret": "",
+  "feishuAppId": "",
+  "feishuAppSecret": "",
+  "feishuChatId": ""
+}

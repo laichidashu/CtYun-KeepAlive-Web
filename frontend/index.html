@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="ubzd4v4Vj1f5v4lFItTgFD">
+<head data-page-node-id="Qnt6MWOoJzFzFg3pqXRZTa">
+    <meta charset="UTF-8" data-page-node-id="eZCWgrhCk2ZhNAAfBcZ5Ex">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="SZgkuJ6dcSGZxXzUOT8WNC">
+    <title>CtYun - 天翼云保活控制面板</title>
+    <!-- 离线优先：不引用任何 CDN 字体/脚本，字体名保留 Inter / JetBrains Mono，未安装时回退系统字体 -->
+    <link rel="stylesheet" href="styles.css" data-page-node-id="2v2b8fujNyTitTtAGj84Bi">
+</head>
+<body data-page-node-id="4grBOSX7QFPaCBbFLyPbWp">
+
+    <!-- ==================== 登录遮罩层 ==================== -->
+    <div id="login-overlay" data-page-node-id="40IVffuHqdSeeB5JU2daoX">
+        <div class="glass-card login-card" data-page-node-id="RzCSB3utSCaBwKstrCN2ko">
+            <div class="logo-icon" style="margin: 0 auto 20px; width: 48px; height: 48px; font-size: 24px;" data-page-node-id="CR1IhNHMIjF9FiHrZ5Ti7Y">☁️</div>
+            <h1 class="login-title" data-page-node-id="eBkEIcM5y0fEyIl1oMI5bz">控制面板登录</h1>
+            <p class="login-subtitle" data-page-node-id="k7CD5cPTA89nmHGWWcJWEf">请输入后台访问密码以继续管理保活服务。</p>
+            <div class="input-group" style="text-align: left;" data-page-node-id="NnXs81c83J0Oly78gbFi15">
+                <label for="admin-password" data-page-node-id="aIU8nRjCJ1NbiITtpYgHCW">访问密码</label>
+                <input type="password" id="admin-password" placeholder="请输入密码" autocomplete="current-password" data-page-node-id="otX1SYnx3g5kBlWMmly4lp">
+            </div>
+            <button type="button" class="btn-submit" id="btn-login" style="margin-top: 10px;" data-page-node-id="E9Ar9aazaDxLIpRhDNOwpz">进入系统</button>
+            <div class="login-error" id="login-error" data-page-node-id="DAV7N33zpWkin1PjPVquj5"></div>
+        </div>
+    </div>
+
+    <!-- ==================== 顶部导航 ==================== -->
+    <header data-page-node-id="EExTloLZgi9V50Cx9vAL8A">
+        <div class="logo-group" data-page-node-id="KNG5sccJf0oNIczciqsjiq">
+            <div class="logo-icon" data-page-node-id="ak1YAX1x7jYs2dfHIkayBe">☁️</div>
+            <div class="logo-name-wrapper" data-page-node-id="9OFKODiqdYGq8cUC8VasnH">
+                <h1 class="logo-title" data-page-node-id="GJZ52yV0XjaZrn2UrlgreA">CtYun KeepAlive</h1>
+            </div>
+        </div>
+        <div class="nav-actions" data-page-node-id="QEccFzrYDeyXTiBryourT3">
+            <button type="button" class="btn-header" id="btn-refresh" data-page-node-id="qrWwncTuNlchlNEnNAZIB9">🔄 刷新当前页</button>
+            <button type="button" class="btn-header" id="btn-change-password" data-page-node-id="RA9Fzb6Q8j05eMEc9bBMn2">🔑 修改密码</button>
+            <button type="button" class="btn-header" id="btn-logout" style="color: var(--status-red);" data-page-node-id="iWFj2KFHKmo7bpcvZyXTFI">🚪 退出</button>
+            <a href="https://pc.ctyun.cn/" target="_blank" rel="noopener noreferrer" class="btn-jump" data-page-node-id="ttdgVlzMjxq0vQgr4C0VJ6">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="LuPCRCFRYD2K48t93INqft"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" data-page-node-id="Th3l5hbxeXu9G4j4ka9TWc"></path><polyline points="15 3 21 3 21 9" data-page-node-id="sIexzqw4gixEnfYMLQyX5u"></polyline><line x1="10" y1="14" x2="21" y2="3" data-page-node-id="l1ajBky3m2qzFjPQLwFZfD"></line></svg>
+                一键打开天翼云电脑
+            </a>
+        </div>
+    </header>
+
+    <!-- ==================== Tab 导航 ==================== -->
+    <nav class="tab-bar" id="tab-bar" data-page-node-id="tRRRJyKHQwjaFGmmgMJKzF">
+        <button type="button" class="tab-btn active" data-tab="overview" data-page-node-id="FBeXy67IpsQ7RVYH9S2I5V">总览</button>
+        <button type="button" class="tab-btn" data-tab="accounts" data-page-node-id="wM2IqGj3KnPvnXogUgUZBa">账号</button>
+        <button type="button" class="tab-btn" data-tab="jobs" data-page-node-id="fjqSYooRnQ8yk4ry9YuRdk">定时任务</button>
+        <button type="button" class="tab-btn" data-tab="redeem" data-page-node-id="HDOV3ag3D6kkZagl67HehS">兑换</button>
+        <button type="button" class="tab-btn" data-tab="logs" data-page-node-id="mDkwx2nRCPujYwWFAMlJ83">日志</button>
+        <button type="button" class="tab-btn" data-tab="settings" data-page-node-id="fhcNeGzEYWp1OaTBUuFogz">设置</button>
+    </nav>
+
+    <main data-page-node-id="y2U3EC3rH5W8MYg1XuDGBx">
+
+        <!-- ==================== 总览 ==================== -->
+        <section class="tab-panel active" id="panel-overview" data-page-node-id="IK8qGaolcBQNn0MqAWj5CN">
+            <div class="panel-toolbar" data-page-node-id="7ZMCRw2hm7aUOFBnaZs3m5">
+                <h2 class="section-title no-margin" data-page-node-id="oOFrZd3Z8oNHhBoVAtLsE4">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="siDVR8htiCPwPFSmlJ3Y9q"><rect x="3" y="3" width="7" height="9" data-page-node-id="xKoX2TvSpoEAPB9p7tCOuE"></rect><rect x="14" y="3" width="7" height="5" data-page-node-id="GEI9tH5T7dRiNcQCkD1kSB"></rect><rect x="14" y="12" width="7" height="9" data-page-node-id="kNraD1SfHEn789RGHObJFV"></rect><rect x="3" y="16" width="7" height="5" data-page-node-id="o17tBGm152ztIFVJNFq5CT"></rect></svg>
+                    系统总览
+                </h2>
+                <span class="section-subtitle" id="ov-last-update" data-page-node-id="qdHoiASzKBwUsG8uHszES5">尚未加载</span>
+            </div>
+
+            <div class="metric-grid" id="ov-metrics" data-page-node-id="eCWblCYHEVBjoSYj6CtZQK"></div>
+
+            <div class="glass-card form-section" data-page-node-id="PxSUwiOUCO4f6Wa4f6S4V2">
+                <h2 class="section-title" data-page-node-id="MPX0uPNmpHCLhbLnt0prFG">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="qSXrkBVU0DHj24fZ7yiiKp"><circle cx="12" cy="12" r="10" data-page-node-id="RfW74FJfCWaHqIYUDZ23mD"></circle><polyline points="12 6 12 12 16 14" data-page-node-id="vF59cjCQbZ6NeLhVhIdUnj"></polyline></svg>
+                    调度与下次任务
+                </h2>
+                <div class="kv-grid" id="ov-schedule" data-page-node-id="pssUuvdfYPxUqkDWh0Y2mv"></div>
+            </div>
+        </section>
+
+        <!-- ==================== 账号 ==================== -->
+        <section class="tab-panel" id="panel-accounts" data-page-node-id="01O9TyC5a8wLjcc9NuMzHH">
+            <div class="panel-toolbar" data-page-node-id="nysm7qS0MHlW5RUyTcSfeQ">
+                <h2 class="section-title no-margin" data-page-node-id="xAYFay7ytjSqSoXoF7HA4b">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="lZ8ZEA4BZStZsUsqtnvOxG"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" data-page-node-id="mEn0MOnsZlAcNunLUoJM2t"></path><circle cx="8.5" cy="7" r="4" data-page-node-id="2Dm3XKbQNfglwQBpXi2dLw"></circle><line x1="20" y1="8" x2="20" y2="14" data-page-node-id="PTx0KFQ9AbeL45Jrv7Ez86"></line><line x1="23" y1="11" x2="17" y2="11" data-page-node-id="wdWtCoPj1Xb88ZJ6nITXuP"></line></svg>
+                    保活账号
+                </h2>
+                <div class="btn-row" data-page-node-id="S5vZLoTy6WViwqlCarmQ7F">
+                    <button type="button" class="btn-primary-sm" id="btn-account-add" data-page-node-id="UL1rMlF6bjHuahqXlEURab">＋ 新增账号</button>
+                    <button type="button" class="btn-primary-sm" id="btn-points-refresh" data-page-node-id="pointsRefreshBtn001">💰 刷新积分</button>
+                    <button type="button" class="btn-header" id="btn-accounts-refresh" data-page-node-id="iB8uRWUcPBSFJZFEsNt93C">🔄 刷新</button>
+                </div>
+            </div>
+            <div class="accounts-section" id="accounts-list" data-page-node-id="2z7hsyToc0HlvB7SGADKl1"></div>
+        </section>
+
+        <!-- ==================== 定时任务 ==================== -->
+        <section class="tab-panel" id="panel-jobs" data-page-node-id="7ICXQ1gPVpCpD0qrFc1PnB">
+            <div class="panel-toolbar" data-page-node-id="6wyggXD4RNMzLWriSVJjfr">
+                <h2 class="section-title no-margin" data-page-node-id="y1lQJQ7jBQcRNPqnrWRI7F">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="pG1BeK4eus3Szet8uy0ScG"><circle cx="12" cy="12" r="10" data-page-node-id="A86WFWTezFIB9EgxG8F88j"></circle><polyline points="12 6 12 12 16 14" data-page-node-id="RQAEei9BaviYGUBFGZtLYZ"></polyline></svg>
+                    定时任务
+                </h2>
+                <div class="btn-row" data-page-node-id="zCCQeDvhQWFQPmssfLW2di">
+                    <button type="button" class="btn-primary-sm" id="btn-job-add" data-page-node-id="JtGFsSDH4oYDFFkPpcJHIH">＋ 新建任务</button>
+                    <button type="button" class="btn-header" id="btn-jobs-refresh" data-page-node-id="RCKMe5QlMbdXX9QdcmBD4p">🔄 刷新</button>
+                </div>
+            </div>
+
+            <div class="accounts-section" id="jobs-list" data-page-node-id="GK7ajK04RjxROPdZqrshxV"></div>
+
+            <div class="glass-card form-section" data-page-node-id="lLPDiVT2Eb8EQwsuvjdHCc">
+                <div class="panel-toolbar" data-page-node-id="GxaX0bZqOJitCaA1eOTKjK">
+                    <h2 class="section-title no-margin" data-page-node-id="zBSDOaE3IKXjNlYJuaYbvd">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="QWBrtugsReuR4lCd5MHBNp"><line x1="8" y1="6" x2="21" y2="6" data-page-node-id="jvmdO0DsvJP9QJSYk9I536"></line><line x1="8" y1="12" x2="21" y2="12" data-page-node-id="pBkvThWLgNbaFXE49Iif9o"></line><line x1="8" y1="18" x2="21" y2="18" data-page-node-id="sUGc8QbUJ5xquMLTS2AY5h"></line><line x1="3" y1="6" x2="3.01" y2="6" data-page-node-id="pixBLzDwU2xGy9pdYc3CE1"></line><line x1="3" y1="12" x2="3.01" y2="12" data-page-node-id="eTHaL0HeEmatjZlvq8D2TJ"></line><line x1="3" y1="18" x2="3.01" y2="18" data-page-node-id="ZlA8JGHEhui2hs5aeyymt8"></line></svg>
+                        执行历史
+                        <span class="section-subtitle" data-page-node-id="X8BFA9DxbvAAFJO0Zva3xm">（最近 50 条）</span>
+                    </h2>
+                    <button type="button" class="btn-header" id="btn-history-refresh" data-page-node-id="frIj3fxViHCkWi84McdIyc">🔄 刷新历史</button>
+                </div>
+                <div class="table-wrap" style="margin-top: 16px;" data-page-node-id="CGZlgW8fYsODavX2vIXZSA">
+                    <table class="data-table" data-page-node-id="Lu5dTuePWkriuVkHFqeRNb">
+                        <thead data-page-node-id="PU28mnRI9O33LQCLAmXXQL">
+                            <tr data-page-node-id="nZKvM5R1agc2gDhB1F7vpP">
+                                <th data-page-node-id="bShJovEJTv82OGyDfI4S89">任务</th>
+                                <th data-page-node-id="UX0v2GLdUEvtx8ESiaRBaR">类型</th>
+                                <th data-page-node-id="mI2Az9gYVqRMMqngEkG74H">开始时间</th>
+                                <th data-page-node-id="iiYXGk94CPMaJU45EtPNXB">结束时间</th>
+                                <th data-page-node-id="au0iWsfUzmCpfqFzpDkibP">耗时</th>
+                                <th data-page-node-id="c0q2XnHebIihHSywvKY7zD">退出码</th>
+                                <th data-page-node-id="FHsooahuN3zLbNkvLFyigN">结果</th>
+                                <th data-page-node-id="AAG2xGeLSsTt8p8XeFAlFE">摘要</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs-history-body" data-page-node-id="8gSPh2JwMf0xZ85uBuOTuc"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== 兑换 ==================== -->
+        <section class="tab-panel" id="panel-redeem" data-page-node-id="H8CQxSnYpN64viwFV2UNbJ">
+            <div class="panel-toolbar" data-page-node-id="6fMWR8VMcbTRpozNpnL3cc">
+                <h2 class="section-title no-margin" data-page-node-id="WCd7WKR8otA3snHiTtNztj">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="FFTVbAbdCVgtGXgmn8mXtN"><polyline points="20 12 20 22 4 22 4 12" data-page-node-id="93jNWfa4tNQHqPnWhf6y0Z"></polyline><rect x="2" y="7" width="20" height="5" data-page-node-id="yP06iY3Uxuv5LPkms51ptw"></rect><line x1="12" y1="22" x2="12" y2="7" data-page-node-id="7AQeTn1lzSjfqGpnI8rK86"></line><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" data-page-node-id="agrtSVkj1XgY8ZPL8KOsKX"></path><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" data-page-node-id="HIizAKDoVH0jPmfC3IlNhl"></path></svg>
+                    积分自动兑换
+                </h2>
+                <button type="button" class="btn-header" id="btn-redeem-plan-refresh" data-page-node-id="WLxiTO1GE0fYkVYqzAhC2z">🔄 刷新计划</button>
+            </div>
+
+            <!-- 兑换计划判定 -->
+            <div class="glass-card form-section" data-page-node-id="n23tfKgPjAHKHJZGXV8iMu">
+                <h2 class="section-title" data-page-node-id="uEd6g7DC13R93JyYsPG29E">兑换计划判定</h2>
+                <div class="kv-grid" id="redeem-plan" data-page-node-id="VsjENiy7bmfbf1lf3LxYF9"></div>
+            </div>
+
+            <!-- 奖励选择 -->
+            <div class="glass-card form-section" data-page-node-id="0Vh2VSsjKVfT2ZRnSf6COj">
+                <h2 class="section-title" data-page-node-id="aq5T7NUFATmPZZ5ovlCQsb">可兑换奖励</h2>
+                <div class="notice" style="margin-bottom: 16px;" data-page-node-id="F0UEYCIb0lpKXp3jDyNc9E">
+                    奖励列表来自 selforder 接口（通道 A）。若登录态失效，接口会返回
+                    <code style="font-family: var(--font-mono);" data-page-node-id="c8bDziXu8QKSUwNUqy3lPS">success=false</code> 及原因，此时请改用 Python 通道 B。
+                </div>
+                <div class="input-group" data-page-node-id="zymEtu3hUCxq0Gsuvf5cP2">
+                    <label for="rd-reward-select" data-page-node-id="LeHLlQwXFjIVUBaThuABGh">奖励列表 <span class="hint" data-page-node-id="6k2D8R72XvweSVHiEI6vqO">（选择后自动填充下方商品字段）</span></label>
+                    <select id="rd-reward-select" data-page-node-id="rE33NPpawuhGVDj2HZoMh3">
+                        <option value="" data-page-node-id="ePrSYbII4CWM03I5Rwffh9">（尚未拉取）</option>
+                    </select>
+                </div>
+                <div class="btn-row" style="margin-bottom: 8px;" data-page-node-id="LiGxbTGwg0lux1Ljc04T7X">
+                    <button type="button" class="btn-primary-sm" id="btn-rewards-load" data-page-node-id="3sAR4H4mm1ds4VqSTAOfUs">📥 拉取奖励列表</button>
+                </div>
+            </div>
+
+            <!-- 兑换配置 -->
+            <div class="glass-card form-section" data-page-node-id="uHOE1bRXsd8UWKkBmz9bNg">
+                <h2 class="section-title" data-page-node-id="CRmchEDr8T4gbd2bvYZODn">兑换配置</h2>
+                <div class="input-group" style="margin-bottom: 20px;" data-page-node-id="3Nik7D3Si82JBUJLxkGcs7">
+                    <div class="switch-container" data-page-node-id="tr8iTHa8MIFCO04F6s73El">
+                        <span data-page-node-id="LKVbDCkIhXYgCUIJ7op6WY">启用自动兑换</span>
+                        <label class="switch" data-page-node-id="6JnnzrHvBBI8WwARnF2dwa">
+                            <input type="checkbox" id="rd-enabled" data-page-node-id="PtPahIBYlhJuQCeQmgQ2cF">
+                            <span class="slider" data-page-node-id="kKEP2tSvUmFMHK0UXle5dK"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-grid" data-page-node-id="BXdFnQ6drYfFIgyBVhbPIv">
+                    <div class="input-group" data-page-node-id="Jz0OFE571hrfbXfuBDS4XB">
+                        <label for="rd-desktopId" data-page-node-id="foGkwkC3VMugGRvjoinHFA">云电脑 ID（desktopId）</label>
+                        <input type="text" id="rd-desktopId" placeholder="例如 123456" data-page-node-id="JkddACvgAjltSAXyFUpTsr">
+                    </div>
+                    <div class="input-group" data-page-node-id="gs0rlFywaFPGjiuZQDdZzJ">
+                        <label for="rd-desktop-picker" data-page-node-id="JKckyUMV3DF487VNLjEAhr">从已登录云电脑选择 <span class="hint" data-page-node-id="H93w5Rbvd88hRgvQHxlRH1">（选填）</span></label>
+                        <select id="rd-desktop-picker" data-page-node-id="SuTdBuBqHmWVWLggBnDm5e">
+                            <option value="" data-page-node-id="g7zQWg11GcZp7OTWZAaAkF">（不选择）</option>
+                        </select>
+                    </div>
+                    <div class="input-group" data-page-node-id="raeZNQ5bGpjayBzHhbZjOO">
+                        <label for="rd-prodId" data-page-node-id="jXAJi2LA3AVKOtXEVguEE4">商品 ID（prodId）</label>
+                        <input type="number" id="rd-prodId" placeholder="0" min="0" step="1" data-page-node-id="2XUGcv1NdXUS3VNe6unlPO">
+                    </div>
+                    <div class="input-group" data-page-node-id="tDESnMtZwZjRBCVAtBnFRi">
+                        <label for="rd-prodName" data-page-node-id="LhJnwZqsF2kr7fCVrG9dox">商品名称（prodName）</label>
+                        <input type="text" id="rd-prodName" placeholder="例如 100积分券" data-page-node-id="zcjDjfl2KVMW5EODTbwMVe">
+                    </div>
+                    <div class="input-group" data-page-node-id="aAlCfuedT6dXR09LasVP6E">
+                        <label for="rd-prodType" data-page-node-id="LmvG36L7qMH3tHZ4P5Qkxx">商品类型（prodType）</label>
+                        <input type="text" id="rd-prodType" placeholder="例如 1" data-page-node-id="mS7lrnL8OWr98GXC55yAlL">
+                    </div>
+                    <div class="input-group" data-page-node-id="ze9Dm4GBuizas7sK5EsH93">
+                        <label for="rd-costPoints" data-page-node-id="GkabuKtDea7yYycPE6rAoT">单次所需积分（costPoints）</label>
+                        <input type="number" id="rd-costPoints" placeholder="0" min="0" step="1" data-page-node-id="ALQWxbu1Z3vVSDal1GmUPV">
+                    </div>
+                    <div class="input-group" data-page-node-id="h5uSD84iEyqfiXd70bLHZb">
+                        <label for="rd-maxRedeemTimes" data-page-node-id="ovhCpie3CbmH2xyQPNon4F">单次最大兑换次数 <span class="hint" data-page-node-id="PH96rYEREyGlz5cDB3FAOz">（0 = 按积分尽量兑换）</span></label>
+                        <input type="number" id="rd-maxRedeemTimes" placeholder="0" min="0" step="1" data-page-node-id="kRHkT0pzGO65cqQvDFQbcB">
+                    </div>
+                    <div class="input-group" data-page-node-id="lu270zWZEqGWOy0yKTuZCa">
+                        <label for="rd-scheduleType" data-page-node-id="tpGoNJu6CSWJDgXspakC6g">兑换周期（scheduleType）</label>
+                        <select id="rd-scheduleType" data-page-node-id="GUpAZThBECT9TclWbOEyvA">
+                            <option value="daily" data-page-node-id="ZUqXjPmL9G4ixpCfji5X4E">每天（daily）</option>
+                            <option value="interval_days" data-page-node-id="ToYo8hjU1hGv24ECFl7PVT">每隔 N 天（interval_days）</option>
+                            <option value="monthly_days" data-page-node-id="iAu3CKTzohafQAUTIfP0vr">每月指定日（monthly_days）</option>
+                        </select>
+                    </div>
+                    <div class="input-group" id="rd-interval-row" data-page-node-id="8F3t79Q1DC51FyJWroxA43">
+                        <label for="rd-intervalDays" data-page-node-id="IXdtKbcTTbEHb20RjKdpQx">间隔天数（intervalDays）</label>
+                        <input type="number" id="rd-intervalDays" placeholder="1" min="1" step="1" data-page-node-id="Y0JLyIZJVfcOGHyTTMqT30">
+                    </div>
+                    <div class="input-group" id="rd-monthly-row" data-page-node-id="2VvhyAcV5yMbBwtC4eqgvQ">
+                        <label for="rd-monthlyDays" data-page-node-id="8e84R1FaT5OX9PEkxCkiEg">每月兑换日（monthlyDays）<span class="hint" data-page-node-id="cLlhwKZRe19HIsbamaKvsj">（逗号分隔，-1 = 月末）</span></label>
+                        <input type="text" id="rd-monthlyDays" placeholder="例如 1,15,28 或 -1" data-page-node-id="G3jOCdmfnRrRUjmJ9kXKlx">
+                    </div>
+                </div>
+                <div class="btn-row" style="margin-top: 24px;" data-page-node-id="Yt528K6rhgILb1DCWiAwIM">
+                    <button type="button" class="btn-primary-sm" id="btn-redeem-save" data-page-node-id="MYjJlsDGS8pNISP9FDCJxN">💾 保存配置</button>
+                    <button type="button" class="btn-primary-sm btn-danger-sm" id="btn-redeem-execute" data-page-node-id="pFjwf1eAdBq07spLgJsCK1">⚡ 立即执行兑换</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== 日志 ==================== -->
+        <section class="tab-panel" id="panel-logs" data-page-node-id="WDBS17r1at8y5n47PatPDS">
+            <div class="glass-card log-section" data-page-node-id="IgKxSmGrmtZ2GypUYKNZwJ">
+                <div class="log-header" data-page-node-id="MQwWOBMoLirezy2VGmf2yG">
+                    <h2 class="section-title no-margin" data-page-node-id="4Y82L1ITK3KV0gSlpSlTYD">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="NCwNfSmhs5kPqN7N37vKAh"><polyline points="4 17 10 11 4 5" data-page-node-id="F4khk1YEVenoDFYyTHgF12"></polyline><line x1="12" y1="19" x2="20" y2="19" data-page-node-id="dQH5OGdgpwHhUfntjedbDF"></line></svg>
+                        实时系统日志
+                        <span class="badge muted" id="log-status" data-page-node-id="ffGlkLNiFIj5UmnLPRG0Ec">未连接</span>
+                    </h2>
+                    <div class="log-actions" data-page-node-id="ml4gmaw5PIR7Al7Fz8VBjm">
+                        <span class="section-subtitle" id="log-counter" data-page-node-id="SL4G9HDAe8bBXeZ7VUBaTz">0 行</span>
+                        <button type="button" class="btn-action flex-none" id="btn-log-pause" data-page-node-id="Dp2AWIsdZHNOh5VnMu1SOx">⏸ 暂停滚动</button>
+                        <button type="button" class="btn-action flex-none" id="btn-log-clear" data-page-node-id="c6THtIEbIrsmg9XY5Hbx6Y">🧹 清屏</button>
+                        <div class="switch-container" data-page-node-id="pycErYPaxKCEoOGKpN5BHE">
+                            <span data-page-node-id="AOID840nLzL96TIrmWrSGS">自动滚到底</span>
+                            <label class="switch" data-page-node-id="0hWzmgY4bcIzM0tKEU1Fiw">
+                                <input type="checkbox" id="auto-scroll-toggle" checked data-page-node-id="ZgNeNXcLzxFcAjJdRDblAb">
+                                <span class="slider" data-page-node-id="CjU6AijjvBsfGuWfBOktm5"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="console-box" id="console-logs" data-page-node-id="TLQKRCXomsjHd5YqVCcwNY"></div>
+            </div>
+        </section>
+
+        <!-- ==================== 设置 ==================== -->
+        <section class="tab-panel" id="panel-settings" data-page-node-id="q2ArUl9Tz99LfZJlZZFbQH">
+            <div class="panel-toolbar" data-page-node-id="XH31rkL5iZokA2wFk1jrbw">
+                <h2 class="section-title no-margin" data-page-node-id="dr7HUuAY3VpuBmFAojxZsl">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-page-node-id="rzkzy3h57OrK5b2c3e5MDp"><circle cx="12" cy="12" r="3" data-page-node-id="wVQ38S62vYz5W9eSg1oEbI"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" data-page-node-id="kJmUMAErstsSYOLjkac4xS"></path></svg>
+                    运行参数设置
+                </h2>
+                <button type="button" class="btn-header" id="btn-settings-refresh" data-page-node-id="Nemr6yLQZDk4Bjig84V0jE">🔄 重新载入</button>
+            </div>
+
+            <div class="glass-card form-section" data-page-node-id="MKiAWVGy3UFOqTtU4Br0Nb">
+                <div class="form-grid" data-page-node-id="HfOvTF0JS28lFdMDADBkGS">
+                    <div class="input-group" data-page-node-id="Fxj7DgWPjlkrz4WkXxkmVH">
+                        <label for="set-keepAliveSeconds" data-page-node-id="vRqkBfpSdm1oLBix2hEIEH">保活心跳间隔（秒）</label>
+                        <input type="number" id="set-keepAliveSeconds" min="1" step="1" placeholder="60" data-page-node-id="1dX2DIBIPYEmuvAsBCV3l2">
+                    </div>
+                    <div class="input-group" data-page-node-id="oj436BjahcimyBKFWY6vmQ">
+                        <label for="set-sessionRestartMinutes" data-page-node-id="Hvylp11oQt0cZQHmYTjnoT">会话强制重启周期（分钟，0=关闭）</label>
+                        <input type="number" id="set-sessionRestartMinutes" min="0" step="1" placeholder="1440" data-page-node-id="QA4splhGZhb8OLDwjmtyB9">
+                    </div>
+                    <div class="input-group" data-page-node-id="QtaJZfQlA95zdxdS4vCJkw">
+                        <label for="set-sessionTokenHours" data-page-node-id="mdc1pxXPu6TqCvnTmnCfwD">后台登录有效期（小时）</label>
+                        <input type="number" id="set-sessionTokenHours" min="1" step="1" placeholder="12" data-page-node-id="Q6J1yX9PO1ixIWXckMetCf">
+                    </div>
+                    <div class="input-group" data-page-node-id="5mI7AyqDPgLBJtzQnrPLhc">
+                        <label for="set-pythonExecutable" data-page-node-id="MxEioYskVzavq2tbkRySOC">Python 可执行文件路径 <span class="hint" data-page-node-id="vHxb3HK8oCS5Hl4c0Rq3lh">（留空=自动探测）</span></label>
+                        <input type="text" id="set-pythonExecutable" placeholder="例如 /usr/bin/python3" data-page-node-id="KLGBr5VxX0S9T9RkWUjBUr">
+                    </div>
+                    <div class="input-group" data-page-node-id="onFydu5Np2OgyzJ7J6VK7t">
+                        <label for="set-scriptsDir" data-page-node-id="awLfCa2Eyuwc6G6KhBiqvA">脚本目录 <span class="hint" data-page-node-id="7bFpHneAHa5wHZwXZNxeD7">（留空=程序目录/scripts）</span></label>
+                        <input type="text" id="set-scriptsDir" placeholder="scripts" data-page-node-id="suJHQytvFn1pCc5v0UhuxW">
+                    </div>
+                    <div class="input-group" data-page-node-id="emUhfUjhvjLayWFZCMtGiz">
+                        <label for="set-aiChatTimeoutMinutes" data-page-node-id="n9lG29VCVY2AnV1oOf8NGG">AI 对话任务超时（分钟）</label>
+                        <input type="number" id="set-aiChatTimeoutMinutes" min="1" max="1440" step="1" placeholder="15" data-page-node-id="hviW8H7YPvXohjEoJ9Cbsp">
+                    </div>
+                    <div class="input-group" data-page-node-id="Pe5IdqwLcGt2pOuNY1pLCe">
+                        <label for="set-pcHangTimeoutMinutes" data-page-node-id="1hmCuGNjLgtUyY7puMrSq1">云电脑挂机超时（分钟）</label>
+                        <input type="number" id="set-pcHangTimeoutMinutes" min="1" max="1440" step="1" placeholder="100" data-page-node-id="FdyLJlvUtprXNh4iaPOvzh">
+                    </div>
+                    <div class="input-group" data-page-node-id="a0mnQOpqAJ9ieeM8AFTCbH">
+                        <label for="set-pcHangSeconds" data-page-node-id="WPnQNIRv1l1mQ3mbo33Ha0">云电脑挂机时长（秒）</label>
+                        <input type="number" id="set-pcHangSeconds" min="1" step="1" placeholder="4800" data-page-node-id="a3HVHGftaYUJzCEI4iegtw">
+                    </div>
+                    <div class="input-group" data-page-node-id="5cPztAWuKq2XYQdeFZdcTP">
+                        <label for="set-bootWaitRounds" data-page-node-id="ZSjcj6dt01FX0dWR45Ao3r">开机等待轮数</label>
+                        <input type="number" id="set-bootWaitRounds" min="0" step="1" placeholder="3" data-page-node-id="ZKmkPgqs73Yftfn0UthAzc">
+                    </div>
+                    <div class="input-group" data-page-node-id="5KR7BlDlmZVYsc9DcBhk8X">
+                        <label for="set-bootWaitSecondsPerRound" data-page-node-id="CdDD2KzMbtP6houtFrZ2MT">每轮开机等待秒数</label>
+                        <input type="number" id="set-bootWaitSecondsPerRound" min="0" step="1" placeholder="60" data-page-node-id="jinwg6lbO4RLyYo8remzJy">
+                    </div>
+                    <div class="input-group" data-page-node-id="UoakTlo4MDBxNbWXCrQfYi">
+                        <label for="set-browserMutexMode" data-page-node-id="ezv9LVqJSLbd2YdhRdiGlJ">浏览器互斥模式</label>
+                        <select id="set-browserMutexMode" data-page-node-id="TibDzDxncBBq9FRMSFcDto">
+                            <option value="Global" data-page-node-id="wvdBtEQaAkxjgZfXykKdeo">Global（全局互斥）</option>
+                            <option value="PerType" data-page-node-id="7wvFKnDNKM6widAxYnVVhq">PerType（按类型互斥）</option>
+                        </select>
+                    </div>
+                    <div class="input-group" data-page-node-id="43Aib5v7xN0Xnj4EUSZ3Dy">
+                        <label for="set-pollIntervalSeconds" data-page-node-id="47Rg8oWXOBMzn6ei7LZoCU">前端轮询间隔（秒）</label>
+                        <input type="number" id="set-pollIntervalSeconds" min="1" max="3600" step="1" placeholder="5" data-page-node-id="9rusUmL7Jo9QuML0Fxfgr0">
+                    </div>
+                    <div class="input-group" data-page-node-id="fxWebhookGrp001">
+                        <label for="set-feishuWebhook" data-page-node-id="fxWebhookLbl001">飞书 Webhook <span class="hint" data-page-node-id="fxWebhookHint001">（群机器人地址；没有就留空，用下面的应用方式）</span></label>
+                        <input type="text" id="set-feishuWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx" data-page-node-id="fxWebhookInput001">
+                    </div>
+                    <div class="input-group" data-page-node-id="fxSecretGrp001">
+                        <label for="set-feishuSecret" data-page-node-id="fxSecretLbl001">飞书加签密钥 <span class="hint" data-page-node-id="fxSecretHint001">（机器人未开启加签则留空）</span></label>
+                        <input type="password" id="set-feishuSecret" placeholder="签名校验密钥（选填）" data-page-node-id="fxSecretInput001">
+                    </div>
+                    <div class="input-group" data-page-node-id="fxAppIdGrp001">
+                        <label for="set-feishuAppId" data-page-node-id="fxAppIdLbl001">飞书应用 App ID <span class="hint" data-page-node-id="fxAppIdHint001">（自建应用凭证，与 Webhook 二选一）</span></label>
+                        <input type="text" id="set-feishuAppId" placeholder="cli_xxxxxxxx" data-page-node-id="fxAppIdInput001">
+                    </div>
+                    <div class="input-group" data-page-node-id="fxAppSecretGrp001">
+                        <label for="set-feishuAppSecret" data-page-node-id="fxAppSecretLbl001">飞书应用 App Secret</label>
+                        <input type="password" id="set-feishuAppSecret" placeholder="应用密钥" data-page-node-id="fxAppSecretInput001">
+                    </div>
+                    <div class="input-group" data-page-node-id="fxChatIdGrp001">
+                        <label for="set-feishuChatId" data-page-node-id="fxChatIdLbl001">目标群 chat_id <span class="hint" data-page-node-id="fxChatIdHint001">（留空=自动发到机器人所在第一个群）</span></label>
+                        <input type="text" id="set-feishuChatId" placeholder="oc_xxxxxxxx（选填）" data-page-node-id="fxChatIdInput001">
+                    </div>
+                </div>
+                <div class="btn-row" style="margin-top: 24px;" data-page-node-id="SckmkYKlEKQCEvAiGe8hc2">
+                    <button type="button" class="btn-primary-sm" id="btn-settings-save" data-page-node-id="dsLlqFpsNQdEtrhj0nw745">💾 保存设置</button>
+                    <button type="button" class="btn-primary-sm" id="btn-change-password-2" data-page-node-id="AZi1wqlMrrFoXpHBtBCERZ">🔑 修改后台密码</button>
+                    <button type="button" class="btn-primary-sm" id="btn-feishu-chats" data-page-node-id="fxChatsBtn001">🔍 探测群聊</button>
+                    <button type="button" class="btn-primary-sm" id="btn-feishu-test" data-page-node-id="fxTestBtn001">📨 发送飞书测试消息</button>
+                </div>
+            </div>
+
+            <div class="glass-card form-section" data-page-node-id="W0610rL6zYwVECt2FYcOo6">
+                <h2 class="section-title" data-page-node-id="V5tsajESdeZpKpo2uFcUmb">只读诊断信息</h2>
+                <div class="readonly-grid" id="settings-readonly" data-page-node-id="K3ftknZ3SvPMB9Upk3JGAK"></div>
+            </div>
+
+            <div class="glass-card form-section" data-page-node-id="FTovJOAPfcHZSz5LgKx41i">
+                <div class="panel-toolbar" data-page-node-id="kFrFPe8ZoCoSpnnZYxVLmo">
+                    <h2 class="section-title no-margin" data-page-node-id="OrMy3fRzjMRVQScL8MlO49">环境自检</h2>
+                    <button type="button" class="btn-primary-sm" id="btn-env-check" data-page-node-id="oVFcJoZKxpLQSlbKoTJJhT">🔍 重新检查</button>
+                    <button type="button" class="btn-primary-sm" id="btn-env-install" data-page-node-id="envInstallBtn001">⬇️ 自动安装缺失依赖</button>
+                </div>
+                <div class="kv-grid" id="env-check-summary" style="margin-top: 16px;" data-page-node-id="3cJIl0GVXvjcWWhXabgQA3"></div>
+                <div id="env-check-list" style="margin-top: 16px;" data-page-node-id="5NF8nzChhErxXFYEeLJ7Vc"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ==================== 修改密码弹窗 ==================== -->
+    <div class="modal-overlay" id="modal-password" data-page-node-id="dP3VcILDwW0TrK6mLCwp0a">
+        <div class="glass-card modal-card" data-page-node-id="8HYUzBdK8rDl4o3JQApnW0">
+            <h2 class="section-title" style="margin-bottom: 20px;" data-page-node-id="hHhA6s4C2A7sWD9gXyfQks">🔑 修改后台访问密码</h2>
+            <div class="input-group" data-page-node-id="qGd3F4hh855vSGQaYH65eK">
+                <label for="old-password" data-page-node-id="zKEuNS9e5I9rmESZXcCI3g">原密码</label>
+                <input type="password" id="old-password" placeholder="请输入原访问密码" autocomplete="current-password" data-page-node-id="FRMc1Xje7cVCrz0T7Iy753">
+            </div>
+            <div class="input-group" data-page-node-id="YAozBaRcHVVd0uhL7VwOok">
+                <label for="new-password" data-page-node-id="OfZNzwCjZEaTiSFBBZAOWV">新密码</label>
+                <input type="password" id="new-password" placeholder="请输入新的访问密码" autocomplete="new-password" data-page-node-id="DhR9g6wC2BCrtuCcKG32og">
+            </div>
+            <div class="input-group" data-page-node-id="fK1ClbZFpUho4kWrKwkit0">
+                <label for="confirm-new-password" data-page-node-id="YxcYcC7lEI24ujdD60hjXq">确认新密码</label>
+                <input type="password" id="confirm-new-password" placeholder="请再次输入新访问密码" autocomplete="new-password" data-page-node-id="u02Z7rHH50qHr4z7obASjm">
+            </div>
+            <div class="notice warn" data-page-node-id="QVmT8rDB5i96qUX3oCvSBh">修改成功后，所有已登录会话都会被注销，需要使用新密码重新登录。</div>
+            <div class="modal-footer" data-page-node-id="C41wkZJCtQMGG4zhMO8Yjw">
+                <button type="button" class="btn-submit" id="btn-password-submit" data-page-node-id="riLUOcLCrg9xhj3yMYW8VQ">确认修改</button>
+                <button type="button" class="btn-action" id="btn-password-cancel" data-page-node-id="dJ96nTZrdofQjhvjq21E97">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 新增账号弹窗（含短信验证第二步） ==================== -->
+    <div class="modal-overlay" id="modal-account" data-page-node-id="O0OyHLoJEOIHS35CY31rNK">
+        <div class="glass-card modal-card" data-page-node-id="T75yTrShrdSjICVw1BIRnF">
+            <h2 class="section-title" id="ma-title" style="margin-bottom: 20px;" data-page-node-id="qgL4cB5f2K20e6IS96nl4G">＋ 新增保活账号</h2>
+
+            <!-- 第一步：账号密码 -->
+            <div id="ma-step1" data-page-node-id="SqIHyApwFHx45xl415lnKy">
+                <div class="input-group" data-page-node-id="4jhSKCiiVIsrxsyZyHNtK9">
+                    <label for="ma-name" data-page-node-id="G3zvPKrRHIlRTyxoEywrIh">显示名称（别名，选填）</label>
+                    <input type="text" id="ma-name" placeholder="例如: 账号A" data-page-node-id="OAUYlP78gkvAFA8fDIPO88">
+                </div>
+                <div class="input-group" data-page-node-id="GW6l4oAAh6BvAFFZvwpxE8">
+                    <label for="ma-user" data-page-node-id="53rlmDSJ4UxiBJF1PEl6JA">手机号 / 账号</label>
+                    <input type="text" id="ma-user" placeholder="天翼云登录手机号" autocomplete="off" data-page-node-id="vJgDAVp497G1DmM6ACBDtS">
+                </div>
+                <div class="input-group" data-page-node-id="k8gN4CfeAO1ntk4CveEElW">
+                    <label for="ma-password" data-page-node-id="EYdtvYdU7j8oaqfQiCcAsH">密码</label>
+                    <input type="password" id="ma-password" placeholder="请输入密码" autocomplete="off" data-page-node-id="O04fccFJqLn0fIoWjeD8p1">
+                </div>
+                <div class="input-group" data-page-node-id="ETNqyl1IL3VS5TgzbmgYsH">
+                    <label for="ma-deviceCode" data-page-node-id="7sqrL1DucODy8Jggwfkexf">设备码（Device Code，选填）</label>
+                    <input type="text" id="ma-deviceCode" placeholder="不填则自动生成并保存" data-page-node-id="zdzJFfmCf90jNqTDrevMJt">
+                </div>
+                <div class="modal-footer" data-page-node-id="YxL3j4FxbsRDSdQDbO8keg">
+                    <button type="button" class="btn-submit" id="btn-ma-submit" data-page-node-id="nqBBZalNfHDsNcZ6EKaSWn">立即登录并添加</button>
+                    <button type="button" class="btn-action" id="btn-ma-cancel" data-page-node-id="V9IcwMT3xh3AS885kjnIKv">取消</button>
+                </div>
+            </div>
+
+            <!-- 第二步：短信验证码 -->
+            <div class="sms-wrapper" id="ma-step2" data-page-node-id="ZwwM08XQUnz7iIco3G5AxW">
+                <div class="notice warn" style="margin-bottom: 20px;" data-page-node-id="qCVHRNpHXO4Wn6tOy3QWpP">
+                    检测到该设备码未绑定账号，已向您的手机发送验证码，请输入验证码完成设备绑定。
+                </div>
+                <div class="input-group" data-page-node-id="Y4Si95cudPiAnP4uzjZCeL">
+                    <label data-page-node-id="xUqsHDC15PcyneBfsJBpe9">待验证账号</label>
+                    <div class="readonly-item" data-page-node-id="hnuuWKtjd676BHdPxaEkh5">
+                        <span class="ro-k" data-page-node-id="Pi0mm42WYmtIYK7I0ZkoNV">User</span>
+                        <span class="ro-v" id="ma-sms-user" data-page-node-id="GdLotImGVnI0zEJCtAPkxm">—</span>
+                    </div>
+                </div>
+                <div class="input-group" data-page-node-id="OODLUK2I5DPkQqTfqGNS2G">
+                    <label for="ma-sms-code" data-page-node-id="CDKJSlTBNhy5mGQRHHYyZ7">短信验证码</label>
+                    <input type="text" id="ma-sms-code" placeholder="输入短信验证码" autocomplete="one-time-code" data-page-node-id="Trr3r2Afvc34vWw6Nuu9go">
+                </div>
+                <div class="modal-footer" data-page-node-id="kz3SMAYEIKLCF6jvdZgzrS">
+                    <button type="button" class="btn-submit" id="btn-ma-sms-submit" style="background: linear-gradient(135deg, var(--accent-cyan), var(--status-green)); box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);" data-page-node-id="MgR3xKsksEAb1QFvKoh2mU">验证并绑定设备</button>
+                    <button type="button" class="btn-action" id="btn-ma-sms-cancel" data-page-node-id="mMPvEEtnXPzqYPL3GRZvvU">取消返回</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 编辑账号弹窗 ==================== -->
+    <div class="modal-overlay" id="modal-account-edit" data-page-node-id="UsS0O3JIZGfD205BdeP9rP">
+        <div class="glass-card modal-card" data-page-node-id="IsVUxVG9MlH7NCEnXF3zOT">
+            <h2 class="section-title" style="margin-bottom: 20px;" data-page-node-id="tSYSrfdELBTRSjMAiZnREc">✏️ 编辑账号</h2>
+            <div class="input-group" data-page-node-id="4r0SdLgXMBdOa8BdMhqoUE">
+                <label data-page-node-id="JtxPEQabBIWojCVZhddhfN">账号主键（不可修改）</label>
+                <div class="readonly-item" data-page-node-id="ygXnGjz5PEuz48GXsw2C3w">
+                    <span class="ro-k" data-page-node-id="j3IL1Lv7iWghyalFjcykfZ">Key</span>
+                    <span class="ro-v" id="me-key" data-page-node-id="z3AYeYeOYiPd09wgJEPSJo">—</span>
+                </div>
+            </div>
+            <div class="input-group" data-page-node-id="jnJstCS3CmkmKHe15ll5Sm">
+                <label for="me-name" data-page-node-id="QHeL02FHBafl2fBbmvM20O">新显示名称 <span class="hint" data-page-node-id="CNjcIhACykfxDx6ZbfV2yn">（留空表示不修改）</span></label>
+                <input type="text" id="me-name" placeholder="留空则不改" data-page-node-id="56C31Gumz9UUF9DCmumlED">
+            </div>
+            <div class="input-group" data-page-node-id="WLO15t3f6LOMaWO9hNeL8U">
+                <label for="me-password" data-page-node-id="G9Wx1MHJCMZ8WTEUzpupKq">新密码 <span class="hint" data-page-node-id="9YCErog7Zx8gfF4iBZfqnE">（留空表示不修改）</span></label>
+                <input type="password" id="me-password" placeholder="留空则不改" autocomplete="new-password" data-page-node-id="lHcV7sCvPwU8vJGUP5DJm7">
+            </div>
+            <div class="notice" data-page-node-id="unndKeDWti13m6bvQqMCKi">修改备注名即时生效且不中断会话；修改密码需重启该账号保活后生效。</div>
+            <div class="modal-footer" data-page-node-id="rCb5JS8C83cjmBhZWEr60R">
+                <button type="button" class="btn-submit" id="btn-me-submit" data-page-node-id="gQwl2e6QCfPK9ZoMkXYoEH">保存修改</button>
+                <button type="button" class="btn-action" id="btn-me-cancel" data-page-node-id="1WijublMpLjBrmEdk2SCJH">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 任务编辑弹窗 ==================== -->
+    <div class="modal-overlay" id="modal-job" data-page-node-id="Y9Es5v9RDZ0dYCh5YgglC6">
+        <div class="glass-card modal-card wide" data-page-node-id="YqgIt7EOjpTKZRwHwbmCZO">
+            <h2 class="section-title" id="mj-title" style="margin-bottom: 20px;" data-page-node-id="ff8Aw4TwMlCp6DQB8Yc6SB">新建定时任务</h2>
+            <div class="form-grid" data-page-node-id="8AbGCHxUDl1hyPh0cELEjI">
+                <div class="input-group" data-page-node-id="4xSFDCEQ0drV3ZZLZa1EtO">
+                    <label for="mj-name" data-page-node-id="gHj9nLe5XKd4BIlWoajI5F">任务名称</label>
+                    <input type="text" id="mj-name" placeholder="例如: 每日AI对话" data-page-node-id="2hzERUxDBLczVv2jBsHPfS">
+                </div>
+                <div class="input-group" data-page-node-id="iwXfRuaaWiHgTH39bpgfOo">
+                    <label for="mj-type" data-page-node-id="5PqWCFmAqfq3RMrng7DEqb">任务类型</label>
+                    <select id="mj-type" data-page-node-id="26bZ02P7DldkOjxfk0g4JW">
+                        <option value="ai_chat" data-page-node-id="iGISP7LqHeY7HO4proDVI5">AI 对话（ai_chat）</option>
+                        <option value="pc_hang" data-page-node-id="8nNbf9X6LjCbTTARUxdpdn">云电脑挂机（pc_hang）</option>
+                    </select>
+                </div>
+                <div class="input-group" data-page-node-id="O7291b57pZwAs3z1eNC1ct">
+                    <label for="mj-accountUser" data-page-node-id="aXXrUOIVVY7oOAEif7A8xG">关联账号</label>
+                    <select id="mj-accountUser" data-page-node-id="WHJ0LnknIOnGvx1a3E6oVH"></select>
+                </div>
+                <div class="input-group" data-page-node-id="rSRMkY39K67phupY8z8UHk">
+                    <label for="mj-timeoutMinutes" data-page-node-id="4BX2QqHFQYKoi79pX9tt2C">超时时间（分钟，1-1440）</label>
+                    <input type="number" id="mj-timeoutMinutes" min="1" max="1440" step="1" placeholder="15" data-page-node-id="qn9zWLCiI1ySe4qstMKLFb">
+                </div>
+                <div class="input-group" id="mj-hang-row" data-page-node-id="no3w7Y2tYzxeinxr3CBk8L">
+                    <label for="mj-hangSeconds" data-page-node-id="GFkqrhrICrJ000ftvASzHE">挂机时长（秒，仅 pc_hang 生效）</label>
+                    <input type="number" id="mj-hangSeconds" min="1" step="1" placeholder="4800" data-page-node-id="33eOR8NaShFiGyjrIVrvog">
+                </div>
+                <div class="input-group" style="grid-column: 1 / -1;" data-page-node-id="EXnUKKWGEgXbx9qmuDpAWX">
+                    <label for="mj-cron" data-page-node-id="6zQgLeiMeGIB967s9hZnA4">Cron 表达式（5 段：分 时 日 月 周）</label>
+                    <input type="text" id="mj-cron" placeholder="0 3,20 * * *" data-page-node-id="ueh07xVUOqLC9GlUgUF1mA">
+                    <div class="cron-preview" id="mj-cron-preview" data-page-node-id="nDnxQnHs96I9u4P2W2LgU5">输入 cron 表达式后自动校验并预览最近 3 次触发时间。</div>
+                </div>
+            </div>
+            <div class="input-group" style="margin-top: 8px;" data-page-node-id="2xtBFNzPFHywGB78Lbapbs">
+                <div class="switch-container" data-page-node-id="kqWY2bOEGxertn0dRxnW3V">
+                    <span data-page-node-id="hCqGTHh8jQzFhZkxTwfKg4">启用该任务</span>
+                    <label class="switch" data-page-node-id="F3D4t22oAOh2ZrwhAjTtGr">
+                        <input type="checkbox" id="mj-enabled" checked data-page-node-id="0ynEKM35yi6LjDzd7Mk1SG">
+                        <span class="slider" data-page-node-id="JEBQ5nEXPJywvdAL6NKLnw"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="input-group" style="margin-top: 8px;" data-page-node-id="mjdRandomGrp001">
+                <div class="switch-container" data-page-node-id="mjdRandomSw001">
+                    <span data-page-node-id="mjdRandomLbl001">当天随机时间运行 <span class="hint" data-page-node-id="mjdRandomHint001">（开启后每天自动随机选一个时刻执行一次，Cron 的固定时刻不再生效；触发时刻见「下次运行」列）</span></span>
+                    <label class="switch" data-page-node-id="mjdRandomSwEl001">
+                        <input type="checkbox" id="mj-randomDaily" data-page-node-id="mjdRandomChk001">
+                        <span class="slider" data-page-node-id="mjdRandomSlider001"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer" data-page-node-id="V3uGSKELUqa1W9wTZcAGi6">
+                <button type="button" class="btn-submit" id="btn-mj-submit" data-page-node-id="O61LhOGB7B1U929NC7YUTv">保存任务</button>
+                <button type="button" class="btn-action" id="btn-mj-cancel" data-page-node-id="ZoonZae14qeGbP37FjEWSC">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 吐司通知层 -->
+    <div class="toast" id="toast-notify" data-page-node-id="vI12AelkLYfnA7ySpzzzC5">操作成功</div>
+
+    <script src="app.js" defer></script>
+</body>
+</html>
