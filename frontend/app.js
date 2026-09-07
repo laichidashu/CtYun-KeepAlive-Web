@@ -48,6 +48,8 @@
         tasksSummary: null,     // GET /api/tasks/summary
         tasksFilter: 'all',     // 平台任务筛选：all / todo / done
         platformTasks: {},      // 账号平台任务明细缓存：{user: {expanded, loading, ok, msg, tasks, at}}
+        platformAll: null,      // 全部账号平台任务统计：{running, accounts, total, msg, at}
+        updateInfo: null,       // GET /api/update/check 结果
         tasksAutofixTried: false, // 本次会话是否已自动补做过（防重复触发）
         overview: null,         // GET /api/overview
         settings: null,         // GET /api/settings
@@ -1180,8 +1182,19 @@
             node.textContent = '';
             return;
         }
-        node.textContent = '今日：已完成 ' + stat.done + ' · 未完成 ' + stat.todo +
+        var txt = '今日：已完成 ' + stat.done + ' · 未完成 ' + stat.todo +
             (stat.running > 0 ? ' · 运行中 ' + stat.running : '');
+        var all = state.platformAll;
+        if (all) {
+            if (all.running) {
+                txt += ' ｜ 平台任务：统计中…';
+            } else if (Array.isArray(all.accounts) && all.accounts.length > 0) {
+                var t = all.total || { done: 0, doing: 0, todo: 0 };
+                txt += ' ｜ 平台任务：已完成 ' + t.done + ' · 进行中 ' + t.doing +
+                    ' · 未完成 ' + t.todo;
+            }
+        }
+        node.textContent = txt;
     }
 
     /**
@@ -1282,6 +1295,36 @@
             });
             tdAcc.appendChild(document.createElement('br'));
             tdAcc.appendChild(btnPt);
+            // 平台任务统计（全量拉取后显示，无需展开）
+            var pAll = state.platformAll;
+            if (pAll) {
+                var ps = platformStatOf(acc.accountUser);
+                var line = el('div', 'section-subtitle', '');
+                line.style.cssText = 'margin-top:4px;';
+                if (pAll.running && !ps) {
+                    line.textContent = '平台任务：统计中…';
+                } else if (!ps) {
+                    line.textContent = '';
+                } else if (!ps.ok) {
+                    line.textContent = '平台任务：' + (ps.msg || '拉取失败');
+                } else {
+                    var d = 0, g = 0, w = 0;
+                    (ps.tasks || []).forEach(function (pt) {
+                        if (pt.done === true) {
+                            d += 1;
+                        } else if (pt.progress != null && pt.progress > 0) {
+                            g += 1;
+                        } else {
+                            w += 1;
+                        }
+                    });
+                    line.textContent = '平台任务 ' + (ps.tasks || []).length + ' 项：✓' + d +
+                        ' · 进行中 ' + g + ' · 未完成 ' + w;
+                }
+                if (line.textContent) {
+                    tdAcc.appendChild(line);
+                }
+            }
             visible.forEach(function (t, idx) {
                 var tr = el('tr', '');
                 if (idx === 0) {
@@ -1349,10 +1392,8 @@
                         var k2, t2;
                         if (pt.done === true) {
                             k2 = 'ok'; t2 = '已完成';
-                        } else if (pt.done === false) {
-                            k2 = 'err'; t2 = '未完成';
                         } else if (pt.progress != null && pt.progress > 0) {
-                            k2 = 'warn'; t2 = '进行中'; // 平台未给目标值，有进度视为进行中
+                            k2 = 'warn'; t2 = '进行中'; // 有进度但未达标
                         } else {
                             k2 = 'err'; t2 = '未完成';
                         }
@@ -2255,12 +2296,179 @@
         }
     }
 
+    // ---------- 版本与自动更新 ----------
+
+    /** 渲染版本信息（kv-grid）。 */
+    function renderUpdateInfo(res, extra) {
+        var box = $('update-info');
+        if (!box || !res) {
+            return;
+        }
+        clearNode(box);
+        box.appendChild(kvItem('本地版本', (res.local || '—').toString().slice(0, 12), 'muted'));
+        box.appendChild(kvItem('远端版本', (res.remote || (res.ok ? '无' : '—')).toString().slice(0, 12),
+            res.hasUpdate ? 'warn' : 'muted'));
+        if (res.date) {
+            box.appendChild(kvItem('远端提交时间', res.date, 'muted'));
+        }
+        if (res.message) {
+            box.appendChild(kvItem('提交说明', res.message, 'muted'));
+        }
+        box.appendChild(kvItem('状态',
+            res.hasUpdate ? '有新版本可用' : (res.ok ? '已是最新版本' : '检查失败'),
+            res.hasUpdate ? 'warn' : (res.ok ? 'ok' : 'err')));
+        if (extra) {
+            var p = $('update-progress');
+            if (p) {
+                p.textContent = extra;
+            }
+        }
+    }
+
+    /** 检查更新。silent=true 时不弹提示（用于打开设置页自动检查）。 */
+    async function checkUpdate(silent) {
+        var p = $('update-progress');
+        if (p) {
+            p.textContent = '正在检查更新…';
+        }
+        try {
+            var res = await requestJson('/api/update/check');
+            state.updateInfo = res || {};
+            renderUpdateInfo(state.updateInfo, res && res.ok
+                ? (res.hasUpdate ? '发现新版本，点击「更新到最新版并重启」' : '已是最新版本')
+                : '检查失败：' + ((res && res.error) || '未知错误'));
+            if (!silent) {
+                if (res && res.ok) {
+                    notify(res.hasUpdate ? '发现新版本，可点击更新' : '已是最新版本 ✓');
+                } else {
+                    notify('检查更新失败：' + ((res && res.error) || '未知错误'), true);
+                }
+            }
+        } catch (e) {
+            notify('检查更新失败：' + e.message, true);
+        }
+    }
+
+    /** 立即更新并重启服务（更新完成后自动重载页面）。 */
+    async function runUpdate() {
+        if (!confirm('将下载 GitHub 最新版本覆盖代码文件（账号/任务/兑换配置等数据会保留），并重启服务。确定继续？')) {
+            return;
+        }
+        var p = $('update-progress');
+        if (p) {
+            p.textContent = '正在下载并更新，请耐心等待…';
+        }
+        try {
+            var res = await postJson('/api/update/run', {});
+            if (!res || !res.ok) {
+                notify('更新失败：' + ((res && res.error) || '未知错误'), true);
+                if (p) {
+                    p.textContent = '更新失败：' + ((res && res.error) || '');
+                }
+                return;
+            }
+            if (!res.updated) {
+                notify('已经是最新版本，无需更新 ✓');
+                if (p) {
+                    p.textContent = '已是最新版本。';
+                }
+                return;
+            }
+            var changed = (res.changed || []).length;
+            notify('更新成功（' + changed + ' 个文件），服务正在重启…');
+            if (p) {
+                p.textContent = '更新成功（' + changed + ' 个文件），服务正在重启，页面将自动刷新…';
+            }
+            // 等待服务重启完成后自动刷新页面
+            waitForServerAndReload();
+        } catch (e) {
+            // 更新触发重启时连接会被断开，属于正常现象，走等待重启流程
+            waitForServerAndReload();
+        }
+    }
+
+    /** 轮询服务可用性，恢复后自动刷新页面。 */
+    function waitForServerAndReload() {
+        var tries = 0;
+        var timer = setInterval(async function () {
+            tries += 1;
+            try {
+                await requestJson('/api/update/check');
+                clearInterval(timer);
+                window.location.reload();
+            } catch (e) {
+                if (tries > 30) {
+                    clearInterval(timer);
+                    notify('服务重启超时，请手动刷新页面或重新启动服务', true);
+                }
+            }
+        }, 3000);
+    }
+
+    // ---------- 全部账号平台任务统计 ----------
+
+    /** 启动全量统计，并轮询直到完成。 */
+    async function loadAllPlatformTasks() {
+        if (state.platformAll && state.platformAll.running) {
+            return;
+        }
+        state.platformAll = { running: true, accounts: [], total: { done: 0, doing: 0, todo: 0 }, msg: '' };
+        renderTasksSummary();
+        try {
+            await postJson('/api/platform/tasks/all', {});
+        } catch (e) {
+            state.platformAll.running = false;
+            notify('启动平台任务统计失败：' + e.message, true);
+            renderTasksSummary();
+            return;
+        }
+        var tries = 0;
+        var timer = setInterval(async function () {
+            tries += 1;
+            try {
+                var snap = await requestJson('/api/platform/tasks/all');
+                state.platformAll = {
+                    running: !!snap.running,
+                    accounts: snap.accounts || [],
+                    total: snap.total || { done: 0, doing: 0, todo: 0 },
+                    msg: snap.msg || '',
+                    at: Date.now()
+                };
+                renderTasksSummary();
+                if (!snap.running || tries > 60) {
+                    clearInterval(timer);
+                    state.platformAll.running = false;
+                    renderTasksSummary();
+                }
+            } catch (e) {
+                clearInterval(timer);
+                state.platformAll.running = false;
+                renderTasksSummary();
+            }
+        }, 3000);
+    }
+
+    /** 取某账号的全量平台任务统计结果（未完成则返回 null）。 */
+    function platformStatOf(user) {
+        var all = state.platformAll;
+        if (!all || !Array.isArray(all.accounts)) {
+            return null;
+        }
+        for (var i = 0; i < all.accounts.length; i++) {
+            if (all.accounts[i].user === user) {
+                return all.accounts[i];
+            }
+        }
+        return null;
+    }
+
     /** 设置 Tab：载入设置 + 环境自检。 */
     async function loadSettingsTab() {
         var data = await requestJson('/api/settings');
         state.settings = data || {};
         fillSettingsForm();
         await loadEnvCheck();
+        checkUpdate(true).catch(function () { /* ignore */ });
     }
 
     /** 用 state.settings 填充设置表单（可编辑 12 项 + 只读诊断信息）。 */
@@ -2677,6 +2885,18 @@
                     renderTasksSummary();
                 });
             });
+        $('btn-tasks-platform-all').addEventListener('click', function () {
+            loadAllPlatformTasks().catch(function (e) {
+                notify('拉取平台任务失败：' + e.message, true);
+            });
+        });
+        // 版本与自动更新
+        $('btn-update-check').addEventListener('click', function () {
+            checkUpdate(false);
+        });
+        $('btn-update-run').addEventListener('click', function () {
+            runUpdate();
+        });
         $('chk-tasks-autofix').addEventListener('change', function () {
             try {
                 localStorage.setItem('ctyun.tasksAutofix', this.checked ? '1' : '0');
