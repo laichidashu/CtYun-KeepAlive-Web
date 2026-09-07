@@ -241,6 +241,58 @@ def fetch_task_list(api):
     return data or []
 
 
+def _task_target(t):
+    """单个任务的目标次数（limitProgress 等字段），无则 None。"""
+    for k in ("limitProgress", "targetProgress", "taskLimit",
+              "limit", "target", "maxProgress", "needProgress"):
+        v = _to_int(t.get(k))
+        if v is not None and v > 0:
+            return v
+    return None
+
+
+def _task_done_flag(t):
+    """单个任务的完成判定：True=已完成 / False=未完成 / None=无法判断。"""
+    # 1) 显式布尔完成标记
+    for k in ("completed", "isComplete", "finished", "finish", "done", "received"):
+        v = t.get(k)
+        if isinstance(v, bool):
+            return v
+    # 2) 进度 vs 目标
+    progress = _to_int(t.get("currentProgress"))
+    if progress is None:
+        return None
+    target = _task_target(t)
+    if target:
+        return progress >= target
+    # 3) 只有进度无目标：无法确认完成（调用方 fail-open）
+    return None
+
+
+def task_overview(api):
+    """拉取平台全部积分任务的完成情况（供 Web 面板展示）。
+
+    返回 (tasks, error)：
+      tasks: [{"name", "progress", "limit", "done", "reward"}, ...]；done 同上三态。
+      error: None 或错误描述字符串。
+    """
+    tasks = fetch_task_list(api)
+    if tasks is None:
+        return None, "平台任务列表拉取失败（登录态可能失效或接口异常）"
+    out = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        out.append({
+            "name": str(t.get("taskDefName") or "未命名"),
+            "progress": _to_int(t.get("currentProgress")),
+            "limit": _task_target(t),
+            "done": _task_done_flag(t),
+            "reward": _to_int(t.get("integral") or t.get("reward") or t.get("points")),
+        })
+    return out, None
+
+
 def probe_task_done(api, keyword):
     """探测名称含 keyword 的平台任务是否已完成。
 
@@ -266,26 +318,7 @@ def probe_task_done(api, keyword):
     desc = "平台任务[" + "; ".join(lines) + "]" if lines else "平台任务列表为空"
     if target is None:
         return None, desc + "（未找到含「%s」的任务，无法判断）" % keyword
-
-    # 1) 显式布尔完成标记
-    for k in ("completed", "isComplete", "finished", "finish", "done", "received"):
-        v = target.get(k)
-        if isinstance(v, bool):
-            return v, desc
-
-    # 2) 进度 vs 目标
-    progress = _to_int(target.get("currentProgress"))
-    if progress is None:
-        return None, desc + "（无进度字段，无法判断）"
-    for k in ("limitProgress", "targetProgress", "taskLimit", "limit", "target", "maxProgress", "needProgress"):
-        limit = _to_int(target.get(k))
-        if limit is not None and limit > 0:
-            return progress >= limit, desc
-
-    # 3) 只有进度无目标：无法确认完成 → fail-open
-    if progress > 0:
-        return None, desc + "（进度 %d 无目标值，无法确认完成）" % progress
-    return False, desc
+    return _task_done_flag(target), desc
 
 
 def execute(cfg: RedeemConfig, manual: bool = False):
