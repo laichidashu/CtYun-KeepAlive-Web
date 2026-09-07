@@ -401,7 +401,9 @@ class JobService:
                 "lastResult": j.last_result or "",
             }
             todays = [r for r in hist
-                      if r.get("jobId") == j.id
+                      if (r.get("jobId") == j.id
+                          or (r.get("accountUser", "") == (j.account_user or "")
+                              and r.get("jobType", "") == j.type))
                       and datetime.fromtimestamp(r.get("startedAt", 0)).date() == today]
             entry["todayRuns"] = len(todays)
             entry["todaySuccess"] = any(r.get("success") for r in todays)
@@ -420,13 +422,19 @@ class JobService:
 
     @classmethod
     def run_missing_ai_chat(cls):
-        """对今日尚未完成 AI 对话任务的账号，立即后台触发执行。
+        """对今日尚未完成 AI 对话任务的账号，**串行**后台触发执行。
 
+        为什么串行：execute() 受浏览器互斥约束（Global 模式全局同一时刻
+        只允许一个浏览器）。若并发触发全部缺失任务，除第一个外都会被
+        互斥立刻拒绝（"被互斥跳过"），补做等于没做。因此这里只启动
+        一个工作线程，逐个执行；每个任务执行前重新判定是否仍缺失
+        （前一个任务耗时较长，期间 cron 可能已完成后续任务）。
         execute() 内置平台预检：若平台侧本就已完成（关键词「对话」），
         会直接记录「已完成，跳过」，不会重复跑浏览器。
         """
         summary = cls.task_summary()
         triggered, skipped = [], []
+        pending = []
         for acc in summary["accounts"]:
             for jid in acc.get("aiChatMissing", []):
                 job = cls.find(jid)
@@ -435,13 +443,42 @@ class JobService:
                 if job.running:
                     skipped.append({"job": job.name, "reason": "正在运行中"})
                     continue
-                threading.Thread(
-                    target=cls.execute, args=(job, "manual"),
-                    name="job-" + job.id, daemon=True).start()
+                pending.append(job)
                 triggered.append(job.name)
-                logs.info("任务", "[补做] 检测到今日未完成，已触发：%s（%s）"
-                          % (job.name, job.account_user))
+        if pending:
+            threading.Thread(
+                target=cls._run_missing_worker, args=(pending,),
+                name="job-missing-queue", daemon=True).start()
+            logs.info("任务", "[补做] 检测到 %d 个今日未完成的 AI 对话任务，"
+                      "将按队列串行执行：%s"
+                      % (len(pending), "、".join(triggered)))
         return {"triggered": triggered, "skipped": skipped}
+
+    @classmethod
+    def _run_missing_worker(cls, pending):
+        """串行消费补做队列：逐个执行，执行前二次确认仍缺失。"""
+        for job in pending:
+            latest = cls.find(job.id)
+            if latest is None:
+                continue
+            if latest.running:
+                continue
+            # 二次判定：该任务今日是否已有成功记录（可能被 cron/手动抢先完成）
+            try:
+                today = datetime.now().date()
+                done = any(
+                    r.get("jobId") == job.id and r.get("success")
+                    and datetime.fromtimestamp(r.get("startedAt", 0)).date() == today
+                    for r in cls.history_snapshot())
+            except Exception:
+                done = False
+            if done:
+                logs.info("任务", "[补做] %s 已完成（无需重复执行），跳过" % job.name)
+                continue
+            try:
+                cls.execute(latest, "manual")
+            except Exception as ex:
+                logs.error("任务", "[补做] %s 执行异常：%s" % (job.name, ex))
 
     @classmethod
     def next_job(cls):
