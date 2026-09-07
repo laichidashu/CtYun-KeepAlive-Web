@@ -86,6 +86,43 @@ def _update_desktop_status(key, desktop_code, text):
             d["status"] = text
 
 
+def _is_forced_reset(ex) -> bool:
+    """平台/对端主动断开连接（WinError 10054 等）。
+
+    这类断连绝大多数是云电脑未开机或正在重置，平台拒绝/踢掉保活连接，
+    并非本机网络故障。识别出来后走「核对真实状态 → 主动开机」而不是无脑重试。
+    """
+    text = str(ex).lower()
+    markers = ("10054", "10053", "connectionreseterror", "connection aborted",
+               "远程主机强迫", "forcibly closed", "forciblyclose", "broken pipe")
+    return any(m in text for m in markers)
+
+
+def _short_err(ex) -> str:
+    """把冗长的 WinError 描述压缩成一句话。"""
+    text = str(ex)
+    if "10054" in text:
+        return "Errno 10054 远程主机强迫关闭"
+    if "10053" in text:
+        return "Errno 10053 软件导致连接中止"
+    return text[:80]
+
+
+def _probe_real_status(session, desktop):
+    """查询该云电脑的平台真实状态（如「运行中」「已关机」）；查询失败返回 None。"""
+    try:
+        dlist = session.api.get_client_list()
+    except Exception:
+        return None
+    if not dlist:
+        return None
+    me = next((d for d in dlist
+               if str(d.get("desktopId", "")) == str(desktop.get("desktopId", ""))), None)
+    if me is None:
+        return None
+    return str(me.get("useStatusText", ""))
+
+
 class KeepAliveEngine:
     @staticmethod
     def start(account) -> bool:
@@ -307,6 +344,7 @@ class KeepAliveEngine:
         info_refreshes = 0         # 连接信息刷新失败计数
         cycle_no = 0               # 周期计数
         real_status_failures = 0   # 平台真实状态连续异常计数
+        poweron_waits = 0          # 因云电脑关机而等待开机的次数
 
         while not _cancelled(session):
             if session_deadline is not None and time.monotonic() >= session_deadline:
@@ -400,8 +438,40 @@ class KeepAliveEngine:
                 if _cancelled(session) or isinstance(ex, WSClosed) and session.stop.is_set():
                     break
                 consecutive_failures += 1
-                logs.fail(label, "[%s] 异常（连续第 %d 次）: %s" % (code, consecutive_failures, ex))
+
+                # ★ 区分「平台主动断连」与「真实故障」：
+                #   Errno 10054 / 连接被重置 绝大多数是云电脑未开机或正在重置，
+                #   平台直接拒绝连接，并非网络故障——此时疯狂重试只会刷屏并触发无意义的会话重建。
+                forced_reset = _is_forced_reset(ex)
+                if forced_reset:
+                    logs.warn(label, "[%s] 连接被平台关闭（%s）——核对云电脑真实状态..."
+                              % (code, _short_err(ex)))
+                else:
+                    logs.fail(label, "[%s] 异常（连续第 %d 次）: %s" % (code, consecutive_failures, ex))
                 _update_desktop_status(key, code, "连接异常: " + str(ex))
+
+                # ★ 关机/重置导致的断连 → 主动开机 + 长等待（不按失败累计，避免无效自愈）
+                if forced_reset and poweron_waits < 10:
+                    real = _probe_real_status(session, desktop)
+                    if real is not None and real != "运行中":
+                        poweron_waits += 1
+                        consecutive_failures = 0   # 关机导致的断连不计入保活失败
+                        info_refreshes = 0
+                        logs.warn(label, "[%s] 平台真实状态「%s」，连接被拒绝属正常现象；"
+                                  "已发送开机指令，60 秒后重试（第 %d 次等待开机）"
+                                  % (code, real, poweron_waits))
+                        try:
+                            pok, pmsg = session.api.power_on(desktop.get("desktopId", ""))
+                            if pok:
+                                logs.ok(label, "[%s] 开机指令已确认" % code)
+                            else:
+                                logs.warn(label, "[%s] 开机指令未确认：%s" % (code, pmsg))
+                        except Exception as pex:
+                            logs.warn(label, "[%s] 发送开机指令失败：%s" % (code, pex))
+                        _update_desktop_status(key, code, "已关机，已发送开机指令，等待开机")
+                        if _interruptible_wait(session, 60):
+                            break
+                        continue
 
                 # ★ 自愈 1：连续失败 ≥3 → 重新 connect 刷新设备连接信息
                 #   （平台轮换 ClinkLvsOutHost / 证书后，原地用旧配置重连必然失败）
