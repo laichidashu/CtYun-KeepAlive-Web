@@ -1,6 +1,9 @@
-# Normalize line endings (Windows scripts must keep CRLF or cmd.exe fails to parse them)
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# Line endings
+# .bat/.cmd/.ps1: store bytes as-is (CRLF) - cmd.exe cannot parse LF batch files.
+# Do NOT use "text eol=crlf" here: git would still store LF in the blob, and raw
+# downloads / archives would ship LF, causing the bat to abort instantly on Windows.
+*.bat -text
+*.cmd -text
+*.ps1 -text
 *.py text eol=lf
 *.sh text eol=lf
