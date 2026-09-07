@@ -250,6 +250,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._ep_tasks_summary()
             elif path == "/api/tasks/run-missing" and method == "POST":
                 self._ep_tasks_run_missing()
+            elif path == "/api/platform/tasks" and method == "GET":
+                if not self._authorize():
+                    return self._unauthorized()
+                self._ep_platform_tasks()
             elif path == "/api/update/check" and method == "GET":
                 self._ep_update_check()
             elif path == "/api/update/run" and method == "POST":
@@ -651,6 +655,37 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorize():
             return self._unauthorized()
         self._json(_job_service().run_missing_ai_chat())
+
+    def _ep_platform_tasks(self):
+        """实时拉取指定账号的全部平台任务完成情况。
+
+        GET /api/platform/tasks?user=<账号手机号或备注名>
+        返回 {"success", "msg", "user", "tasks": [{name, progress, limit, done, reward}]}
+        done 三态：true=已完成 / false=未完成 / null=无法判断。
+        """
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        user = (query.get("user", [""])[0] or "").strip()
+        if not user:
+            return self._json({"success": False, "msg": "缺少 user 参数", "user": "", "tasks": []})
+        import keepalive as _ka
+        acc = _ka.find_account(user, G.config.accounts)
+        if acc is None:
+            return self._json({"success": False, "msg": "账号不存在", "user": user, "tasks": []})
+        try:
+            import ctyun_api
+            import redeem
+            api = ctyun_api.CtYunApi(acc.device_code)
+            if not api.login(acc.user, acc.password):
+                return self._json({"success": False, "msg": "平台登录失败", "user": user, "tasks": []})
+            tasks, err = redeem.task_overview(api)
+            if err:
+                return self._json({"success": False, "msg": err, "user": user, "tasks": []})
+            done_n = sum(1 for t in tasks if t["done"] is True)
+            logs.info("任务", "[平台任务] %s 实时查询：%d 项任务，已完成 %d"
+                      % (acc.user, len(tasks), done_n))
+            self._json({"success": True, "msg": "", "user": user, "tasks": tasks})
+        except Exception as ex:
+            self._json({"success": False, "msg": str(ex), "user": user, "tasks": []})
 
     # ================= 任务端点 =================
 
