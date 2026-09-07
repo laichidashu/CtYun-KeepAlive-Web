@@ -46,6 +46,7 @@
         jobs: [],               // GET /api/jobs
         history: [],            // GET /api/jobs/history
         tasksSummary: null,     // GET /api/tasks/summary
+        tasksFilter: 'all',     // 平台任务筛选：all / todo / done
         tasksAutofixTried: false, // 本次会话是否已自动补做过（防重复触发）
         overview: null,         // GET /api/overview
         settings: null,         // GET /api/settings
@@ -1168,6 +1169,20 @@
         }
     }
 
+    /** 更新平台任务面板顶部的完成情况统计文案。 */
+    function updateTasksStats(stat) {
+        var node = $('tasks-summary-stats');
+        if (!node) {
+            return;
+        }
+        if (!stat) {
+            node.textContent = '';
+            return;
+        }
+        node.textContent = '今日：已完成 ' + stat.done + ' · 未完成 ' + stat.todo +
+            (stat.running > 0 ? ' · 运行中 ' + stat.running : '');
+    }
+
     /** 渲染平台任务完成情况表。 */
     function renderTasksSummary() {
         var body = $('tasks-summary-body');
@@ -1180,16 +1195,41 @@
             body.appendChild(el('tr', '', '')).appendChild(
                 Object.assign(document.createElement('td'), { colSpan: 7 }));
             body.lastChild.lastChild.appendChild(emptyState('暂无数据'));
+            updateTasksStats(null);
             return;
         }
+        // 统计：已完成 / 未完成 / 运行中（按任务粒度，仅统计启用中的任务）
+        var stat = { done: 0, todo: 0, running: 0 };
+        s.accounts.forEach(function (acc) {
+            (acc.tasks || []).forEach(function (t) {
+                if (t.running) {
+                    stat.running += 1;
+                } else if (t.enabled && t.todaySuccess) {
+                    stat.done += 1;
+                } else if (t.enabled) {
+                    stat.todo += 1;
+                }
+            });
+        });
+        updateTasksStats(stat);
+        var filter = state.tasksFilter || 'all';
         var hasAny = false;
         s.accounts.forEach(function (acc) {
-            (acc.tasks || []).forEach(function (t, idx) {
+            var visible = (acc.tasks || []).filter(function (t) {
+                if (filter === 'done') {
+                    return !!t.todaySuccess;
+                }
+                if (filter === 'todo') {
+                    return !t.todaySuccess;
+                }
+                return true;
+            });
+            visible.forEach(function (t, idx) {
                 hasAny = true;
                 var tr = el('tr', '');
                 // 账号列：同账号首行显示
                 var tdAcc = el('td', '', idx === 0 ? escapeHtml(acc.accountUser) : '');
-                tdAcc.rowSpan = acc.tasks.length;
+                tdAcc.rowSpan = visible.length;
                 tr.appendChild(tdAcc);
                 tr.appendChild(el('td', '', t.jobName || '未命名任务'));
                 tr.appendChild(el('td', '', JOB_TYPE_LABEL[t.jobType] || t.jobType || '未知'));
@@ -1224,7 +1264,10 @@
             var tr = body.appendChild(el('tr', '', ''));
             var td = tr.appendChild(el('td', '', ''));
             td.colSpan = 7;
-            td.appendChild(emptyState('还没有任务。在上方创建 AI 对话或云电脑挂机任务后，这里会显示每个账号的完成情况。'));
+            td.appendChild(emptyState(
+                filter === 'done' ? '当前筛选「已完成」下没有任务。'
+                    : filter === 'todo' ? '当前筛选「未完成」下没有任务，全部完成 ✓'
+                    : '还没有任务。在上方创建 AI 对话或云电脑挂机任务后，这里会显示每个账号的完成情况。'));
         }
     }
 
@@ -2521,6 +2564,15 @@
         $('btn-tasks-autofix').addEventListener('click', function () {
             runMissingAiChat(false);
         });
+        // 完成/未完成筛选按钮
+        Array.prototype.forEach.call(
+            document.querySelectorAll('#tasks-filter-group [data-tfilter]'),
+            function (btn) {
+                btn.addEventListener('click', function () {
+                    state.tasksFilter = this.getAttribute('data-tfilter') || 'all';
+                    renderTasksSummary();
+                });
+            });
         $('chk-tasks-autofix').addEventListener('change', function () {
             try {
                 localStorage.setItem('ctyun.tasksAutofix', this.checked ? '1' : '0');
