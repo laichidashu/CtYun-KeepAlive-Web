@@ -40,6 +40,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem ---- 3.5 Firewall: best-effort allow inbound TCP 8080 (needs admin, ignore on failure) ----
+netsh advfirewall firewall show rule name="CtYun-KeepAlive-8080" >nul 2>nul
+if errorlevel 1 (
+    netsh advfirewall firewall add rule name="CtYun-KeepAlive-8080" dir=in action=allow protocol=TCP localport=8080 >nul 2>nul
+    if errorlevel 1 (
+        echo [HINT] Firewall rule not added - allow TCP 8080 manually to access from other devices.
+    ) else (
+        echo [SETUP] Firewall rule added: inbound TCP 8080 allowed.
+    )
+)
+
 rem ---- 4. Start server ----
 "%PY%" backend\server.py
 pause

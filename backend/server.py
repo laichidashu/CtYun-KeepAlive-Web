@@ -44,6 +44,27 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def _lan_ips():
+    """枚举本机局域网 IPv4（排除回环），用于在启动日志中给出可访问地址。"""
+    import socket
+    ips = set()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("223.5.5.5", 80))  # 不实际发包，仅取路由出口 IP
+        ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except Exception:
+        pass
+    return sorted(ips)
+
+
 def main():
     logs.write_line("版本：v " + VERSION, logs.LEVEL_INFO, "系统")
 
@@ -98,6 +119,12 @@ def main():
         return
     server = QuietThreadingHTTPServer(("0.0.0.0", port), httpd.Handler)
     logs.write_line("[系统] Web 服务已启动，监听地址：http://localhost:%d" % port,
+                    logs.LEVEL_INFO, "系统")
+    for ip in _lan_ips():
+        logs.write_line("[系统] 局域网访问：http://%s:%d （其他设备请用此地址）" % (ip, port),
+                        logs.LEVEL_INFO, "系统")
+    logs.write_line("[系统] 提示：若浏览器无法访问，请检查 1) Windows 防火墙是否放行 TCP %d；"
+                    "2) 浏览器/系统代理是否拦截了该地址。" % port,
                     logs.LEVEL_INFO, "系统")
 
     signal.signal(signal.SIGINT, _handle_sig)
