@@ -64,6 +64,19 @@ def generate_random_string(length: int) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
+def _restart_after_update(delay: float = 1.5):
+    """更新完成后重启服务：给前端留出收包时间，再交给 updater 拉起新进程。"""
+    time.sleep(delay)
+    try:
+        import updater
+        updater.restart_service()
+    except Exception as ex:
+        logs.fail("系统", "自动重启失败，请手动重启服务：" + str(ex))
+        return
+    time.sleep(0.5)
+    os._exit(0)
+
+
 def resolve_device_code(account, data_dir: str) -> str:
     """设备码：账号自带 → devices/{safe}.txt 兜底文件（web_ + 32 随机字符）。"""
     if account.device_code and account.device_code.strip():
@@ -233,6 +246,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._ep_jobs_history()
             elif path == "/api/jobs/cron-preview" and method == "POST":
                 self._ep_jobs_cron_preview()
+            elif path == "/api/tasks/summary" and method == "GET":
+                self._ep_tasks_summary()
+            elif path == "/api/tasks/run-missing" and method == "POST":
+                self._ep_tasks_run_missing()
+            elif path == "/api/update/check" and method == "GET":
+                self._ep_update_check()
+            elif path == "/api/update/run" and method == "POST":
+                self._ep_update_run()
             elif path == "/api/redeem/config" and method == "GET":
                 self._ep_redeem_config_get()
             elif path == "/api/redeem/config" and method == "PUT":
@@ -592,6 +613,44 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorize():
             return self._unauthorized()
         self._json(envprobe.install_missing())
+
+    # ================= 自动更新 =================
+
+    def _ep_update_check(self):
+        if not self._authorize():
+            return self._unauthorized()
+        try:
+            import updater
+            self._json(updater.check_update())
+        except Exception as ex:
+            self._json({"ok": False, "hasUpdate": False, "error": str(ex)})
+
+    def _ep_update_run(self):
+        if not self._authorize():
+            return self._unauthorized()
+        try:
+            import updater
+            result = updater.perform_update()
+        except Exception as ex:
+            self._json({"ok": False, "updated": False, "error": str(ex)})
+            return
+        if result.get("updated"):
+            logs.ok("系统", "代码已更新（%d 个文件），即将自动重启服务" % len(result.get("changed", [])))
+        # 先回包，再由后台线程触发重启，避免前端收不到响应
+        self._json(result)
+        if result.get("updated"):
+            threading.Thread(target=_restart_after_update, name="update-restart",
+                             daemon=True).start()
+
+    def _ep_tasks_summary(self):
+        if not self._authorize():
+            return self._unauthorized()
+        self._json(_job_service().task_summary())
+
+    def _ep_tasks_run_missing(self):
+        if not self._authorize():
+            return self._unauthorized()
+        self._json(_job_service().run_missing_ai_chat())
 
     # ================= 任务端点 =================
 
