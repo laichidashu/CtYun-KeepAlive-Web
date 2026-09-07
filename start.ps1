@@ -118,7 +118,12 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# ---------- 3.5 firewall (best effort) ----------
+# ---------- 3.5 auto update from GitHub ----------
+Log '[3/4] checking updates'
+Write-Host '[SETUP] Checking for updates from GitHub ...'
+& $py (Join-Path $root 'backend\updater.py') --update
+
+# ---------- 3.7 firewall (best effort) ----------
 
 Log '[3/4] firewall'
 $ruleName = 'CtYun-KeepAlive-8080'
