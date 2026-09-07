@@ -47,6 +47,7 @@
         history: [],            // GET /api/jobs/history
         tasksSummary: null,     // GET /api/tasks/summary
         tasksFilter: 'all',     // 平台任务筛选：all / todo / done
+        platformTasks: {},      // 账号平台任务明细缓存：{user: {expanded, loading, ok, msg, tasks, at}}
         tasksAutofixTried: false, // 本次会话是否已自动补做过（防重复触发）
         overview: null,         // GET /api/overview
         settings: null,         // GET /api/settings
@@ -1183,6 +1184,47 @@
             (stat.running > 0 ? ' · 运行中 ' + stat.running : '');
     }
 
+    /**
+     * 展开/收起某账号的平台任务明细。首次展开自动拉取；数据超过 5 分钟自动刷新。
+     * @param {string} user 账号
+     */
+    function togglePlatformTasks(user) {
+        var st = state.platformTasks[user];
+        if (!st) {
+            loadPlatformTasks(user);
+            return;
+        }
+        st.expanded = !st.expanded;
+        if (st.expanded && !st.loading && st.at && Date.now() - st.at > 5 * 60 * 1000) {
+            loadPlatformTasks(user); // 数据过期，重新拉取
+            return;
+        }
+        renderTasksSummary();
+    }
+
+    /** 实时登录平台拉取指定账号的全部积分任务完成情况。 */
+    async function loadPlatformTasks(user) {
+        state.platformTasks[user] = { expanded: true, loading: true, ok: false, msg: '', tasks: [] };
+        renderTasksSummary();
+        try {
+            var res = await requestJson('/api/platform/tasks?user=' + encodeURIComponent(user));
+            state.platformTasks[user] = {
+                expanded: true,
+                loading: false,
+                ok: !!res.success,
+                msg: res.msg || '',
+                tasks: Array.isArray(res.tasks) ? res.tasks : [],
+                at: Date.now()
+            };
+        } catch (e) {
+            state.platformTasks[user] = {
+                expanded: true, loading: false, ok: false,
+                msg: e.message, tasks: []
+            };
+        }
+        renderTasksSummary();
+    }
+
     /** 渲染平台任务完成情况表。 */
     function renderTasksSummary() {
         var body = $('tasks-summary-body');
@@ -1224,13 +1266,27 @@
                 }
                 return true;
             });
+            var pst = state.platformTasks[acc.accountUser];
+            var detailOpen = !!(pst && pst.expanded);
+            if (visible.length === 0 && !detailOpen) {
+                return;
+            }
+            hasAny = true;
+            // 账号列：同账号首行显示，并附带平台任务明细开关
+            var tdAcc = el('td', '', escapeHtml(acc.accountUser));
+            tdAcc.rowSpan = Math.max(1, visible.length) + (detailOpen ? 1 : 0);
+            var btnPt = el('button', 'btn-header', detailOpen ? '平台任务 ▴' : '平台任务 ▾');
+            btnPt.style.cssText = 'font-size:12px;padding:2px 8px;margin-top:4px;';
+            btnPt.addEventListener('click', function () {
+                togglePlatformTasks(acc.accountUser);
+            });
+            tdAcc.appendChild(document.createElement('br'));
+            tdAcc.appendChild(btnPt);
             visible.forEach(function (t, idx) {
-                hasAny = true;
                 var tr = el('tr', '');
-                // 账号列：同账号首行显示
-                var tdAcc = el('td', '', idx === 0 ? escapeHtml(acc.accountUser) : '');
-                tdAcc.rowSpan = visible.length;
-                tr.appendChild(tdAcc);
+                if (idx === 0) {
+                    tr.appendChild(tdAcc);
+                }
                 tr.appendChild(el('td', '', t.jobName || '未命名任务'));
                 tr.appendChild(el('td', '', JOB_TYPE_LABEL[t.jobType] || t.jobType || '未知'));
                 // 今日状态徽章
@@ -1259,6 +1315,54 @@
                 tr.appendChild(el('td', '', t.nextRunAt || '—'));
                 body.appendChild(tr);
             });
+            if (visible.length === 0) {
+                // 无任务但明细展开：占一行避免账号列悬空
+                var tdNone = el('td', '', '');
+                tdNone.colSpan = 6;
+                tdNone.appendChild(emptyState('该账号暂无配置的定时任务'));
+                var trNone = el('tr', '');
+                trNone.appendChild(tdNone);
+                body.appendChild(trNone);
+            }
+            // 平台任务明细行（实时登录平台拉取的全部积分任务）
+            if (detailOpen) {
+                var trD = el('tr', '');
+                var tdD = el('td', '');
+                tdD.colSpan = 6;
+                if (pst.loading) {
+                    tdD.appendChild(emptyState('正在登录平台并拉取任务列表，约需几秒…'));
+                } else if (!pst.ok) {
+                    tdD.appendChild(emptyState('拉取失败：' + (pst.msg || '未知错误'), true));
+                } else if (pst.tasks.length === 0) {
+                    tdD.appendChild(emptyState('平台未返回任何任务'));
+                } else {
+                    pst.tasks.forEach(function (pt) {
+                        var line = el('div', '', '');
+                        line.style.cssText = 'display:flex;align-items:center;gap:10px;padding:2px 0;';
+                        var nm = el('span', '', pt.name || '未命名');
+                        nm.style.cssText = 'min-width:180px;';
+                        line.appendChild(nm);
+                        var prog = (pt.progress != null ? pt.progress : '?') +
+                            (pt.limit ? '/' + pt.limit : '');
+                        line.appendChild(el('span', 'section-subtitle',
+                            '进度 ' + prog + (pt.reward ? ' · ' + pt.reward + ' 积分' : '')));
+                        var k2, t2;
+                        if (pt.done === true) {
+                            k2 = 'ok'; t2 = '已完成';
+                        } else if (pt.done === false) {
+                            k2 = 'err'; t2 = '未完成';
+                        } else if (pt.progress != null && pt.progress > 0) {
+                            k2 = 'warn'; t2 = '进行中'; // 平台未给目标值，有进度视为进行中
+                        } else {
+                            k2 = 'err'; t2 = '未完成';
+                        }
+                        line.appendChild(badge(t2, k2));
+                        tdD.appendChild(line);
+                    });
+                }
+                trD.appendChild(tdD);
+                body.appendChild(trD);
+            }
         });
         if (!hasAny) {
             var tr = body.appendChild(el('tr', '', ''));
