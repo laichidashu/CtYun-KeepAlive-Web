@@ -4,6 +4,7 @@
 通道 A：selforder 奖励/积分拉取 + placeOrder 下单（复用 CtYunApi 签名头）。
 """
 import json
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -241,14 +242,36 @@ def fetch_task_list(api):
     return data or []
 
 
+def _infer_target(name):
+    """从任务名称推断目标值（平台接口只返回进度、不返回目标值时的兜底）。
+
+    实测样例：「使用1小时」进度单位为秒（3600 = 完成）、「与AI对话1次」= 1 次、
+    「登录AI云电脑」= 1 次。返回 None 表示无法推断（保持三态无法判断）。
+    """
+    if not name:
+        return None
+    m = re.search(r"(\d+)\s*小时", name)
+    if m:
+        return int(m.group(1)) * 3600
+    m = re.search(r"(\d+)\s*分钟", name)
+    if m:
+        return int(m.group(1)) * 60
+    m = re.search(r"(\d+)\s*次", name)
+    if m:
+        return int(m.group(1))
+    if "登录" in name:
+        return 1
+    return None
+
+
 def _task_target(t):
-    """单个任务的目标次数（limitProgress 等字段），无则 None。"""
+    """单个任务的目标次数（limitProgress 等字段），无则尝试从名称推断。"""
     for k in ("limitProgress", "targetProgress", "taskLimit",
               "limit", "target", "maxProgress", "needProgress"):
         v = _to_int(t.get(k))
         if v is not None and v > 0:
             return v
-    return None
+    return _infer_target(str(t.get("taskDefName") or ""))
 
 
 def _task_done_flag(t):
