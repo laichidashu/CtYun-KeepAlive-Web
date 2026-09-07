@@ -45,6 +45,8 @@
         accounts: [],           // GET /api/accounts
         jobs: [],               // GET /api/jobs
         history: [],            // GET /api/jobs/history
+        tasksSummary: null,     // GET /api/tasks/summary
+        tasksAutofixTried: false, // 本次会话是否已自动补做过（防重复触发）
         overview: null,         // GET /api/overview
         settings: null,         // GET /api/settings
         redeemConfig: null,     // GET /api/redeem/config
@@ -662,12 +664,15 @@
         state.redeemPlan = null;
         state.rewards = [];
         state.envCheck = null;
+        state.tasksSummary = null;
+        state.tasksAutofixTried = false;
 
         clearNode($('ov-metrics'));
         clearNode($('ov-schedule'));
         clearNode($('accounts-list'));
         clearNode($('jobs-list'));
         clearNode($('jobs-history-body'));
+        clearNode($('tasks-summary-body'));
         clearNode($('redeem-plan'));
         clearNode($('settings-readonly'));
         clearNode($('env-check-summary'));
@@ -1086,13 +1091,141 @@
         var results = await Promise.all([
             requestJson('/api/jobs'),
             requestJson('/api/jobs/history'),
-            requestJson('/api/accounts')
+            requestJson('/api/accounts'),
+            requestJson('/api/tasks/summary').catch(function () { return null; })
         ]);
         state.jobs = Array.isArray(results[0]) ? results[0] : [];
         state.history = Array.isArray(results[1]) ? results[1] : [];
         state.accounts = Array.isArray(results[2]) ? results[2] : [];
+        state.tasksSummary = results[3] || null;
         renderJobs();
         renderHistory();
+        renderTasksSummary();
+        maybeAutoFix();
+    }
+
+    /** 仅拉取平台任务完成情况。 */
+    async function loadTasksSummary() {
+        var data = await requestJson('/api/tasks/summary');
+        state.tasksSummary = data || null;
+        renderTasksSummary();
+    }
+
+    /** 自动补做开关（持久化到 localStorage，默认开启）。 */
+    function autofixEnabled() {
+        try {
+            return localStorage.getItem('ctyun.tasksAutofix') !== '0';
+        } catch (e) {
+            return true;
+        }
+    }
+
+    /** 汇总里是否存在今日未完成的 AI 对话任务。 */
+    function hasMissingAiChat() {
+        var s = state.tasksSummary;
+        if (!s || !Array.isArray(s.accounts)) {
+            return false;
+        }
+        return s.accounts.some(function (acc) {
+            return Array.isArray(acc.aiChatMissing) && acc.aiChatMissing.length > 0;
+        });
+    }
+
+    /** 汇总加载后：若开启自动补做且检测到未完成的 AI 对话，则触发一次。 */
+    function maybeAutoFix() {
+        if (state.tasksAutofixTried || !autofixEnabled() || !hasMissingAiChat()) {
+            return;
+        }
+        state.tasksAutofixTried = true;
+        runMissingAiChat(true);
+    }
+
+    /**
+     * 触发补做今日未完成的 AI 对话任务。
+     * @param {boolean} silent 自动触发时静默，仅在有实际触发时提示
+     */
+    async function runMissingAiChat(silent) {
+        try {
+            var res = await postJson('/api/tasks/run-missing', {});
+            var triggered = (res && res.triggered) || [];
+            var skipped = (res && res.skipped) || [];
+            if (triggered.length > 0) {
+                notify('已触发补做：' + triggered.join('、') +
+                    (skipped.length > 0 ? '（跳过 ' + skipped.length + ' 个）' : ''));
+            } else if (!silent) {
+                notify(skipped.length > 0
+                    ? '没有可补做的任务：' + skipped.map(function (s) { return s.job + '（' + s.reason + '）'; }).join('、')
+                    : '所有账号的 AI 对话任务今日均已完成 ✓');
+            }
+            // 延迟刷新：让新触发的任务先落到汇总里
+            setTimeout(function () {
+                loadTasksSummary().catch(function () { /* ignore */ });
+            }, 2500);
+        } catch (e) {
+            if (!silent) {
+                notify('补做失败：' + e.message, true);
+            }
+        }
+    }
+
+    /** 渲染平台任务完成情况表。 */
+    function renderTasksSummary() {
+        var body = $('tasks-summary-body');
+        if (!body) {
+            return;
+        }
+        clearNode(body);
+        var s = state.tasksSummary;
+        if (!s || !Array.isArray(s.accounts)) {
+            body.appendChild(el('tr', '', '')).appendChild(
+                Object.assign(document.createElement('td'), { colSpan: 7 }));
+            body.lastChild.lastChild.appendChild(emptyState('暂无数据'));
+            return;
+        }
+        var hasAny = false;
+        s.accounts.forEach(function (acc) {
+            (acc.tasks || []).forEach(function (t, idx) {
+                hasAny = true;
+                var tr = el('tr', '');
+                // 账号列：同账号首行显示
+                var tdAcc = el('td', '', idx === 0 ? escapeHtml(acc.accountUser) : '');
+                tdAcc.rowSpan = acc.tasks.length;
+                tr.appendChild(tdAcc);
+                tr.appendChild(el('td', '', t.jobName || '未命名任务'));
+                tr.appendChild(el('td', '', JOB_TYPE_LABEL[t.jobType] || t.jobType || '未知'));
+                // 今日状态徽章
+                var tdStatus = el('td', '');
+                var kind, text;
+                if (t.running) {
+                    kind = 'warn'; text = '运行中';
+                } else if (!t.enabled) {
+                    kind = 'muted'; text = '已停用';
+                } else if (t.todaySuccess) {
+                    kind = 'ok'; text = '今日已完成';
+                } else if (t.todayRuns > 0) {
+                    kind = 'err'; text = '今日失败 ×' + t.todayRuns;
+                } else {
+                    kind = 'err'; text = '今日未执行';
+                }
+                tdStatus.appendChild(badge(text, kind));
+                tr.appendChild(tdStatus);
+                // 今日最近一次
+                var tdLast = el('td', '', t.todayRuns > 0
+                    ? (t.todayLastAt || '') + ' ' + (t.todayLastSummary || '')
+                    : '—');
+                tdLast.title = t.todayLastSummary || '';
+                tr.appendChild(tdLast);
+                tr.appendChild(el('td', '', t.lastRunAt || '—'));
+                tr.appendChild(el('td', '', t.nextRunAt || '—'));
+                body.appendChild(tr);
+            });
+        });
+        if (!hasAny) {
+            var tr = body.appendChild(el('tr', '', ''));
+            var td = tr.appendChild(el('td', '', ''));
+            td.colSpan = 7;
+            td.appendChild(emptyState('还没有任务。在上方创建 AI 对话或云电脑挂机任务后，这里会显示每个账号的完成情况。'));
+        }
     }
 
     /** 仅拉取执行历史。 */
@@ -2379,6 +2512,19 @@
             loadHistory().catch(function (e) {
                 notify('刷新历史失败：' + e.message, true);
             });
+        });
+        $('btn-tasks-refresh').addEventListener('click', function () {
+            loadTasksSummary().catch(function (e) {
+                notify('刷新平台任务情况失败：' + e.message, true);
+            });
+        });
+        $('btn-tasks-autofix').addEventListener('click', function () {
+            runMissingAiChat(false);
+        });
+        $('chk-tasks-autofix').addEventListener('change', function () {
+            try {
+                localStorage.setItem('ctyun.tasksAutofix', this.checked ? '1' : '0');
+            } catch (e) { /* ignore */ }
         });
         $('mj-type').addEventListener('change', syncHangRowVisibility);
         $('mj-cron').addEventListener('input', scheduleCronPreview);
