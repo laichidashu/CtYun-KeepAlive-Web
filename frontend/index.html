@@ -115,6 +115,12 @@
                         <span class="section-subtitle" data-page-node-id="tsum-sub-1">（今日各账号任务执行与平台完成状态）</span>
                     </h2>
                     <div class="btn-row" data-page-node-id="tsum-btnrow-1">
+                        <span id="tasks-summary-stats" class="section-subtitle" style="margin-right:8px;" data-page-node-id="tsum-stats-1"></span>
+                        <div class="btn-row" id="tasks-filter-group" style="gap:4px;" data-page-node-id="tsum-filter-1">
+                            <button type="button" class="btn-header" data-tfilter="all">全部</button>
+                            <button type="button" class="btn-header" data-tfilter="todo">未完成</button>
+                            <button type="button" class="btn-header" data-tfilter="done">已完成</button>
+                        </div>
                         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" data-page-node-id="tsum-auto-label">
                             <input type="checkbox" id="chk-tasks-autofix" checked data-page-node-id="tsum-auto-chk">
                             检测到未完成时自动补做
