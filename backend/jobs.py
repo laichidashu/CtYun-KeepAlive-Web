@@ -375,6 +375,75 @@ class JobService:
         return s, f
 
     @classmethod
+    def task_summary(cls):
+        """按账号汇总平台任务（ai_chat / pc_hang）的执行情况。
+
+        返回 {date, accounts: [{accountUser, tasks: [...], aiChatDone, aiChatMissing}]}。
+        判定口径：某任务「今日已完成」= 今天有 success=true 的执行记录
+        （含平台预检判定「已完成，跳过」的记录）。
+        """
+        with cls._lock:
+            jobs = list(cls._jobs)
+        hist = cls.history_snapshot()
+        today = datetime.now().date()
+        accounts = {}
+        order = []
+        for j in jobs:
+            key = j.account_user or "(未绑定账号)"
+            if key not in accounts:
+                accounts[key] = {"accountUser": key,
+                                 "tasks": [], "aiChatDone": True, "aiChatMissing": []}
+                order.append(key)
+            entry = {
+                "jobId": j.id, "jobName": j.name, "jobType": j.type,
+                "enabled": j.enabled, "running": j.running,
+                "lastRunAt": j.last_run_at, "nextRunAt": j.next_run_at,
+                "lastResult": j.last_result or "",
+            }
+            todays = [r for r in hist
+                      if r.get("jobId") == j.id
+                      and datetime.fromtimestamp(r.get("startedAt", 0)).date() == today]
+            entry["todayRuns"] = len(todays)
+            entry["todaySuccess"] = any(r.get("success") for r in todays)
+            if todays:
+                entry["todayLastSummary"] = todays[-1].get("summary", "")
+                entry["todayLastAt"] = datetime.fromtimestamp(
+                    todays[-1]["startedAt"]).strftime("%H:%M:%S")
+            else:
+                entry["todayLastSummary"] = ""
+                entry["todayLastAt"] = ""
+            accounts[key]["tasks"].append(entry)
+            if j.type == JOB_TYPE_AI_CHAT and j.enabled and not entry["todaySuccess"]:
+                accounts[key]["aiChatDone"] = False
+                accounts[key]["aiChatMissing"].append(j.id)
+        return {"date": today.isoformat(), "accounts": [accounts[k] for k in order]}
+
+    @classmethod
+    def run_missing_ai_chat(cls):
+        """对今日尚未完成 AI 对话任务的账号，立即后台触发执行。
+
+        execute() 内置平台预检：若平台侧本就已完成（关键词「对话」），
+        会直接记录「已完成，跳过」，不会重复跑浏览器。
+        """
+        summary = cls.task_summary()
+        triggered, skipped = [], []
+        for acc in summary["accounts"]:
+            for jid in acc.get("aiChatMissing", []):
+                job = cls.find(jid)
+                if job is None:
+                    continue
+                if job.running:
+                    skipped.append({"job": job.name, "reason": "正在运行中"})
+                    continue
+                threading.Thread(
+                    target=cls.execute, args=(job, "manual"),
+                    name="job-" + job.id, daemon=True).start()
+                triggered.append(job.name)
+                logs.info("任务", "[补做] 检测到今日未完成，已触发：%s（%s）"
+                          % (job.name, job.account_user))
+        return {"triggered": triggered, "skipped": skipped}
+
+    @classmethod
     def next_job(cls):
         """启用且 NextRunAt 有效的任务中，最小的未来触发时间与名称。"""
         best, name = 0, ""
