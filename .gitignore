@@ -38,3 +38,6 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 启动引导日志
+startup.log

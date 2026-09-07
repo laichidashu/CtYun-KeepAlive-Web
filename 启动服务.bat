@@ -1,9 +1,11 @@
 @echo off
 rem CtYun KeepAlive - one-click start (Python backend + web console, no Docker)
 rem Flow: locate/install python -> ensure .venv -> env check & auto-install deps -> run server
+rem NOTE: ASCII only + CRLF line endings. Do NOT add "chcp" (it aborts cmd on some Windows builds).
 setlocal
 cd /d "%~dp0"
-chcp 65001 >nul
+set "LOG=%~dp0startup.log"
+echo START %DATE% %TIME% > "%LOG%"
 echo ================================================
 echo  CtYun KeepAlive  starting on http://localhost:8080
 echo  Default password: admin   (change it in Settings)
@@ -11,6 +13,7 @@ echo  Press Ctrl+C to stop.
 echo ================================================
 
 rem ---- 1. Locate a usable interpreter (venv / PATH / common paths / auto-install) ----
+echo [1/4] locating python >> "%LOG%"
 set "PY="
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 if not defined PY call :try_cmd python
@@ -19,6 +22,7 @@ if not defined PY call :try_paths
 if not defined PY call :install_python
 if not defined PY goto no_python
 echo [SETUP] Using Python: %PY%
+echo [1/4] python=%PY% >> "%LOG%"
 
 rem ---- 2. Create project venv for dependency isolation ----
 if exist ".venv\Scripts\python.exe" (
@@ -32,27 +36,34 @@ if not exist ".venv\Scripts\python.exe" echo [WARN] Failed to create .venv, depe
 
 :envcheck
 rem ---- 3. Environment check + auto-install missing deps (fails - abort) ----
+echo [2/4] checking environment >> "%LOG%"
 echo [SETUP] Checking environment and dependencies ...
 "%PY%" backend\bootstrap.py
 if errorlevel 1 (
     echo [ERROR] Environment check failed. Please fix the problems above and retry.
+    echo [2/4] env check FAILED >> "%LOG%"
     pause
     exit /b 1
 )
 
 rem ---- 3.5 Firewall: best-effort allow inbound TCP 8080 (needs admin, ignore on failure) ----
+echo [3/4] firewall >> "%LOG%"
 netsh advfirewall firewall show rule name="CtYun-KeepAlive-8080" >nul 2>nul
 if errorlevel 1 (
     netsh advfirewall firewall add rule name="CtYun-KeepAlive-8080" dir=in action=allow protocol=TCP localport=8080 >nul 2>nul
     if errorlevel 1 (
         echo [HINT] Firewall rule not added - allow TCP 8080 manually to access from other devices.
+        echo [3/4] firewall rule NOT added >> "%LOG%"
     ) else (
         echo [SETUP] Firewall rule added: inbound TCP 8080 allowed.
+        echo [3/4] firewall rule added >> "%LOG%"
     )
 )
 
 rem ---- 4. Start server ----
+echo [4/4] starting server >> "%LOG%"
 "%PY%" backend\server.py
+echo [4/4] server exited >> "%LOG%"
 pause
 exit /b 0
 
@@ -78,7 +89,7 @@ rem Auto-download and silently install Python 3.12 (per-user, no admin needed)
 where curl >nul 2>nul || goto :eof
 set "INST=%TEMP%\python-3.12.8-amd64.exe"
 del "%INST%" >nul 2>nul
-echo [SETUP] Python not found. Auto-installing Python 3.12 ^(about 25 MB, please wait^)...
+echo [SETUP] Python not found. Auto-installing Python 3.12 - about 25 MB, please wait...
 echo [SETUP] Downloading mirror 1/2: Huawei Cloud ...
 curl -L --fail --connect-timeout 20 -o "%INST%" "https://mirrors.huaweicloud.com/python/3.12.8/python-3.12.8-amd64.exe" >nul 2>nul
 call :check_inst
@@ -116,5 +127,6 @@ echo   Manual install:
 echo     1. Download: https://www.python.org/downloads/
 echo     2. During install, CHECK "Add python.exe to PATH".
 echo     3. Then run this script again.
+echo [1/4] NO PYTHON FOUND >> "%LOG%"
 pause
 exit /b 1
