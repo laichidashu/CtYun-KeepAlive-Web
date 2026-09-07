@@ -40,14 +40,19 @@ def main() -> int:
         print("[bootstrap] 环境检查通过：requests / pillow / DrissionPage / ddddocr 已就绪")
         return 0
 
-    print("[bootstrap] 缺失依赖：%s，开始自动安装（首次安装约需 1-3 分钟，请耐心等待）..." % ", ".join(missing))
-    cmds = [
-        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"] + missing,
-        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-i", MIRROR] + missing,
+    print("[bootstrap] 缺失依赖：%s，开始自动安装（首次安装约需 1-5 分钟，请耐心等待）..." % ", ".join(missing))
+    # 国内网络环境优先镜像源；pip 本身限制重试，失败快速切换下一个源
+    sources = [
+        ("清华镜像", MIRROR),
+        ("阿里云镜像", "https://mirrors.aliyun.com/pypi/simple/"),
+        ("官方源", "https://pypi.org/simple/"),
     ]
-    for i, cmd in enumerate(cmds):
-        if i:
-            print("[bootstrap] 默认源安装未成功，改用清华镜像重试 ...")
+    rc = 1
+    for name, index_url in sources:
+        cmd = [sys.executable, "-m", "pip", "install",
+               "--disable-pip-version-check", "--retries", "2", "--timeout", "15",
+               "-i", index_url] + missing
+        print("[bootstrap] 正在从「%s」安装 ..." % name)
         try:
             rc = subprocess.call(cmd)
         except Exception as ex:
@@ -55,6 +60,7 @@ def main() -> int:
             rc = 1
         if rc == 0:
             break
+        print("[bootstrap] 「%s」安装未成功，切换下一个源 ..." % name)
 
     still = _missing()
     if still:
