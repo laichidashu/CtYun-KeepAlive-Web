@@ -45,6 +45,62 @@ _CONTENT_TYPES = {
 }
 
 
+# 全部账号平台任务统计的后台任务状态（登录较慢，走后台线程 + 前端轮询）
+_platform_all_lock = threading.Lock()
+_platform_all_state = {
+    "running": False,
+    "startedAt": 0.0,
+    "finishedAt": 0.0,
+    "ok": False,
+    "msg": "",
+    "accounts": [],                            # [{user, name, ok, msg, tasks}]
+    "total": {"done": 0, "doing": 0, "todo": 0},
+}
+
+
+def _platform_all_worker():
+    """逐个账号登录平台拉取全部积分任务，汇总完成/进行中/未完成数量。"""
+    import ctyun_api
+    try:
+        accounts = list((G.config.accounts if G.config else []) or [])
+    except Exception:
+        accounts = []
+    results = []
+    total = {"done": 0, "doing": 0, "todo": 0}
+    for acc in accounts:
+        entry = {"user": acc.user, "name": acc.name or "", "ok": False, "msg": "", "tasks": []}
+        try:
+            api = ctyun_api.CtYunApi(acc.device_code)
+            if not api.login(acc.user, acc.password):
+                entry["msg"] = "平台登录失败"
+            else:
+                tasks, err = redeem.task_overview(api)
+                if err:
+                    entry["msg"] = err
+                else:
+                    entry["ok"] = True
+                    entry["tasks"] = tasks
+                    for t in tasks:
+                        if t["done"] is True:
+                            total["done"] += 1
+                        elif t["progress"] is not None and t["progress"] > 0:
+                            total["doing"] += 1
+                        else:
+                            total["todo"] += 1
+        except Exception as ex:
+            entry["msg"] = str(ex)
+        results.append(entry)
+        with _platform_all_lock:
+            _platform_all_state["accounts"] = list(results)
+            _platform_all_state["total"] = dict(total)
+    with _platform_all_lock:
+        _platform_all_state["running"] = False
+        _platform_all_state["finishedAt"] = time.time()
+        _platform_all_state["ok"] = any(a["ok"] for a in results)
+    logs.info("任务", "[平台任务] 全量统计完成（%d 个账号）：已完成 %d / 进行中 %d / 未完成 %d"
+              % (len(results), total["done"], total["doing"], total["todo"]))
+
+
 # ---------- Program.cs 辅助函数移植 ----------
 
 def first_not_empty(*values):
@@ -254,6 +310,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._authorize():
                     return self._unauthorized()
                 self._ep_platform_tasks()
+            elif path == "/api/platform/tasks/all" and method == "POST":
+                if not self._authorize():
+                    return self._unauthorized()
+                self._ep_platform_tasks_all_start()
+            elif path == "/api/platform/tasks/all" and method == "GET":
+                if not self._authorize():
+                    return self._unauthorized()
+                self._ep_platform_tasks_all_status()
             elif path == "/api/update/check" and method == "GET":
                 self._ep_update_check()
             elif path == "/api/update/run" and method == "POST":
@@ -686,6 +750,35 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"success": True, "msg": "", "user": user, "tasks": tasks})
         except Exception as ex:
             self._json({"success": False, "msg": str(ex), "user": user, "tasks": []})
+
+    # ---------- 全部账号平台任务统计（后台任务 + 状态轮询） ----------
+
+    def _ep_platform_tasks_all_start(self):
+        """启动全量统计：逐个账号登录平台拉取任务列表（串行，避免验证码并发）。"""
+        with _platform_all_lock:
+            if _platform_all_state["running"]:
+                return self._json({"started": False, "running": True, "msg": "统计进行中"})
+            _platform_all_state.update({
+                "running": True, "startedAt": time.time(), "finishedAt": 0,
+                "accounts": [], "total": {"done": 0, "doing": 0, "todo": 0},
+                "ok": False, "msg": "",
+            })
+        threading.Thread(target=_platform_all_worker,
+                         name="platform-tasks-all", daemon=True).start()
+        self._json({"started": True, "running": True, "msg": ""})
+
+    def _ep_platform_tasks_all_status(self):
+        with _platform_all_lock:
+            snap = {
+                "running": _platform_all_state["running"],
+                "startedAt": _platform_all_state["startedAt"],
+                "finishedAt": _platform_all_state["finishedAt"],
+                "ok": _platform_all_state["ok"],
+                "msg": _platform_all_state["msg"],
+                "accounts": _platform_all_state["accounts"],
+                "total": dict(_platform_all_state["total"]),
+            }
+        self._json(snap)
 
     # ================= 任务端点 =================
 
