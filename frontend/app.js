@@ -1733,6 +1733,20 @@
             hangSeconds: parseIntOr($('mj-hangSeconds').value, 4800)
         };
 
+        if (payload.type === 'pc_hang') {
+            // 挂机任务的超时必须覆盖挂机时长，否则脚本再正常也会被判超时
+            var needed = Math.ceil(payload.hangSeconds / 60) + 10;
+            if (payload.timeoutMinutes < needed) {
+                if (!confirm('云电脑挂机任务需要 ' + payload.hangSeconds + ' 秒（约 '
+                    + Math.ceil(payload.hangSeconds / 60) + ' 分钟），但超时只有 '
+                    + payload.timeoutMinutes + ' 分钟，任务会在挂机完成前被终止。\n\n'
+                    + '是否自动把超时调整为 ' + needed + ' 分钟？')) {
+                    return;
+                }
+                payload.timeoutMinutes = needed;
+            }
+        }
+
         if (!payload.name) {
             notify('任务名称不能为空', true);
             return;
