@@ -19,6 +19,9 @@ from store import G, ConfigStore, Paths
 
 TICK_SECONDS = 20
 HISTORY_LIMIT = 50
+# 定时触发的任务在浏览器被占用时的排队参数（避免多个任务同时到点互相顶掉）
+MUTEX_QUEUE_WAIT_SECONDS = 3 * 3600   # 最多排队 3 小时
+MUTEX_QUEUE_POLL_SECONDS = 20         # 每 20 秒重试一次
 
 JOB_TYPE_AI_CHAT = "ai_chat"
 JOB_TYPE_PC_HANG = "pc_hang"
@@ -293,25 +296,52 @@ class JobService:
             except Exception as pex:
                 logs.warn("任务", "[%s] 平台任务预检异常（照常执行脚本）：%s" % (job.name, pex))
 
-            # 2. 浏览器互斥
+            # 2. 浏览器互斥（定时触发的任务排队等待，避免同时到点全部被跳过）
             import mutex
             if not mutex.BrowserMutex.try_acquire(job.type, job.name):
-                record.success = False
-                record.summary = mutex.mutex_message()
-                record.ended_at = int(time.time())
-                job.last_result = "被互斥跳过"
-                with cls._lock:
-                    job.running = False
-                cls._append_history(record)
-                return
-            acquired = True
+                if source == "cron":
+                    logs.info("任务", "[%s] 浏览器被占用，进入排队等待（最多 %d 分钟）"
+                              % (job.name, MUTEX_QUEUE_WAIT_SECONDS // 60))
+                    waited = 0
+                    while waited < MUTEX_QUEUE_WAIT_SECONDS:
+                        time.sleep(MUTEX_QUEUE_POLL_SECONDS)
+                        waited += MUTEX_QUEUE_POLL_SECONDS
+                        with cls._lock:
+                            still_enabled = job.enabled
+                        if not still_enabled:
+                            break
+                        if mutex.BrowserMutex.try_acquire(job.type, job.name):
+                            acquired = True
+                            logs.info("任务", "[%s] 排队 %d 秒后获得浏览器使用权，开始执行"
+                                      % (job.name, waited))
+                            break
+                if not acquired:
+                    record.success = False
+                    record.summary = mutex.mutex_message()
+                    record.ended_at = int(time.time())
+                    job.last_result = "被互斥跳过"
+                    with cls._lock:
+                        job.running = False
+                    cls._append_history(record)
+                    return
 
             # 3. 脚本与参数
             script_path = Paths.pc_hang_script if job.type == JOB_TYPE_PC_HANG else Paths.ai_chat_script
             hang_seconds = job.hang_seconds if job.type == JOB_TYPE_PC_HANG else 0
 
+            # 3.5 挂机任务的生效超时：必须覆盖挂机时长，否则任务必然被判超时
+            #     （例如挂机 4810 秒却只给 15 分钟超时，脚本再正常也会被杀）。
+            effective_timeout = job.timeout_minutes
+            if job.type == JOB_TYPE_PC_HANG:
+                needed = hang_seconds // 60 + 10  # 挂机时长 + 10 分钟收尾余量
+                if effective_timeout < needed:
+                    effective_timeout = needed
+                    logs.warn("任务", "[%s] 超时时间 %d 分钟小于挂机时长（%d 秒），"
+                              "本次按 %d 分钟执行；建议在任务里把超时调到该值以上"
+                              % (job.name, job.timeout_minutes, hang_seconds, needed))
+
             # 4. 运行脚本
-            result = scriptrunner.run(account, script_path, hang_seconds, job.timeout_minutes)
+            result = scriptrunner.run(account, script_path, hang_seconds, effective_timeout)
 
             # 5. 汇总
             ended = int(time.time())
