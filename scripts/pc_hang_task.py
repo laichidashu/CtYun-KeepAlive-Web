@@ -384,14 +384,56 @@ def wait_desktop_opened(page: ChromiumPage, timeout: int = 270) -> bool:
     return False
 
 
-def open_points_center_and_print(page: ChromiumPage, timeout: int = 60) -> int:
-    """打开积分中心并输出积分详情。"""
+# 积分中心入口候选选择器：平台改版后文本/标签可能变化，逐个尝试
+POINTS_ENTRY_SELECTORS = [
+    "xpath://span[contains(string(), '积分中心')]",
+    "xpath://a[contains(string(), '积分中心')]",
+    "xpath://div[contains(string(), '积分中心')]",
+    "xpath://li[contains(string(), '积分中心')]",
+    "xpath://*[contains(text(), '积分中心')]",
+    "xpath://span[contains(string(), '积分')]",
+]
+
+
+def _find_points_entry(page: ChromiumPage):
+    """在主文档与各 iframe 中查找「积分中心」入口元素。"""
+    for selector in POINTS_ENTRY_SELECTORS:
+        try:
+            ele = page.ele(selector, timeout=2)
+        except Exception:
+            ele = None
+        if ele:
+            return ele
+
+    # 入口可能位于 iframe 内（如侧边栏/悬浮窗）
     try:
-        locator = "xpath://span[contains(string(), '积分中心')]"
-        target_element = page.ele(locator, timeout=120)
+        iframes = page.eles("css:iframe", timeout=1) or []
+    except Exception:
+        iframes = []
+    for frame_ele in iframes:
+        try:
+            frame = page.get_frame(frame_ele)
+        except Exception:
+            frame = None
+        if not frame:
+            continue
+        for selector in POINTS_ENTRY_SELECTORS:
+            try:
+                ele = frame.ele(selector, timeout=1)
+            except Exception:
+                ele = None
+            if ele:
+                return ele
+    return None
+
+
+def open_points_center_and_print(page: ChromiumPage, timeout: int = 60) -> int:
+    """打开积分中心并输出积分详情。找不到入口时返回 0（不再视为致命错误）。"""
+    try:
+        target_element = _find_points_entry(page)
 
         if not target_element:
-            print("\r[-] 未找到积分中心入口。")
+            print("\r[-] 未找到积分中心入口（页面可能已改版），改用接口读取进度。")
             return 0
 
         clicked = target_element.click(by_js=True)
@@ -475,34 +517,37 @@ def wait_for_points_with_points(
     page.listen.start(url)
     current_points = open_points_center_and_print(page)
     packet = page.listen.wait(timeout=20)
+    # 抓不到数据包时的兜底请求头（直接用浏览器 Cookie 调接口）
+    api_headers = clean_headers(packet.request.headers) if packet else build_headers_from_page(page)
+    fallback_hinted = False
     while remaining > 0:
-        # 开始挂机，获取积分中心数据，然后无限循环，并获取网络数据包判断是否完成挂机
+        # 开始挂机，获取积分中心数据，然后循环判断是否完成挂机
         current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not packet:
-            packet_retry_count += 1
-            print(
-                f"\r[-] {current_time_str} 未捕获到积分数据包，正在重试 ({packet_retry_count}/6)"
-            )
+            # 抓不到数据包不再终止任务：改用接口查询，接口也不通就纯挂机等待
+            if not fallback_hinted:
+                print(
+                    f"\n[-] {current_time_str} 未捕获到积分数据包（积分中心入口可能已改版），"
+                    f"改为直接调用接口查询进度；接口不通时保持挂机，不再中断任务。"
+                )
+                fallback_hinted = True
+            if not api_headers:
+                api_headers = build_headers_from_page(page)
             time.sleep(10)
+            remaining -= 10
+            # 每隔一段时间再尝试一次打开积分中心并抓包
+            if packet_retry_count % 6 == 5:
+                page.listen.start(url)
+                current_points = open_points_center_and_print(page)
+                packet = page.listen.wait(timeout=10)
+            packet_retry_count += 1
+        else:
+            packet_retry_count = 0
+            api_headers = clean_headers(packet.request.headers)
 
-            if packet_retry_count >= 6:
-                print(f"[-] {current_time_str} 连续 6 次未捕获到数据包，程序终止。")
-                sys.exit(1)
-
-            page.refresh()
-            time.sleep(5)
-            page.listen.start(url)
-            current_points = open_points_center_and_print(page)
-            packet = page.listen.wait(timeout=20)
-            continue
-
-        # 成功捕获到包，清零数据包重试计数器
-        packet_retry_count = 0
-        headers = packet.request.headers
-
-        if not redeem_config_checked:
+        if not redeem_config_checked and api_headers:
             config = ensure_redeem_config(
-                page, clean_headers(headers), running_in_docker, config_redeem_only
+                page, api_headers, running_in_docker, config_redeem_only
             )
             redeem_config_checked = True
             enabled = config.get("enabled")
@@ -520,12 +565,23 @@ def wait_for_points_with_points(
             else:
                 print("[*] 已开启积分兑换，继续执行挂机任务 。\n")
 
-        current_progress = fetch_current_progress(url, headers)
+        current_progress = fetch_hang_progress(url, api_headers)
+
+        if current_progress is None:
+            # 拿不到进度：保持挂机（云电脑在线本身就在累计时长），不终止任务
+            print(
+                f"\r[-] {current_time_str} 进度暂不可读，保持挂机（剩余约 {remaining // 60} 分钟）",
+                flush=True,
+            )
+            time.sleep(30)
+            remaining -= 30
+            continue
 
         if current_progress is not None and current_progress > 0:
             print(
-                f"\r[-] {current_time_str} 挂机剩余 {60 - (current_progress // 60)} 分钟。",
-                end="",
+                f"\r[-] {current_time_str} 挂机进度 {current_progress}/3600"
+                f"（剩余约 {(3600 - current_progress) // 60} 分钟）",
+                flush=True,
             )
             # 进度发生实际变化
             if current_progress != last_progress:
@@ -538,7 +594,7 @@ def wait_for_points_with_points(
             if current_progress >= 3600:
                 print(f"\r[-] {current_time_str} 挂机任务完成。")
                 auto_redeem_reward_after_hang(
-                    page, headers, running_in_docker, current_points
+                    page, api_headers, running_in_docker, current_points
                 )
                 sys.exit(0)
 
@@ -634,6 +690,78 @@ def clean_headers(headers: Dict[str, str]) -> Dict[str, str]:
         if not str(k).startswith(":"):
             clean[str(k)] = v
     return clean
+
+
+def build_headers_from_page(page: ChromiumPage) -> Dict[str, str]:
+    """从浏览器 Cookie 构造平台接口请求头。
+
+    用途：无法捕获「积分中心」数据包时（页面改版 / 入口不存在）的兜底方案，
+    直接携带登录态请求 getTaskList 查询挂机进度。
+    """
+    try:
+        cookies = page.cookies(all_domains=True) or []
+    except Exception:
+        cookies = []
+
+    parts = []
+    for item in cookies:
+        name = item.get("name")
+        domain = item.get("domain") or ""
+        if not name or "ctyun.cn" not in domain:
+            continue
+        parts.append(f"{name}={item.get('value', '')}")
+    if not parts:
+        return {}
+
+    try:
+        user_agent = page.run_js("return navigator.userAgent;") or ""
+    except Exception:
+        user_agent = ""
+
+    return {
+        "Cookie": "; ".join(parts),
+        "User-Agent": user_agent
+        or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://pc.ctyun.cn/",
+        "Origin": "https://pc.ctyun.cn",
+    }
+
+
+def fetch_hang_progress(url: str, headers: Dict[str, str]):
+    """查询「使用1小时」任务进度。成功返回 int，失败返回 None（区别于进度 0）。"""
+    if not headers:
+        return None
+    try:
+        response = requests.get(url, headers=clean_headers(headers), timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        task_list = data.get("data") if isinstance(data, dict) else data
+        for task in task_list or []:
+            if task.get("taskDefName") == "使用1小时":
+                value = task.get("currentProgress")
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+    except Exception as error:
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{current_time}] 进度查询失败: {error}")
+        return None
+
+
+def clear_session(page: ChromiumPage) -> None:
+    """清除浏览器内登录态（localStorage.authData + 站点 Cookie）。"""
+    try:
+        page.run_js("try{localStorage.removeItem('authData');}catch(e){}")
+        page.run_js("try{sessionStorage.clear();}catch(e){}")
+    except Exception:
+        pass
+    try:
+        page.set.cookies.clear()
+    except Exception:
+        pass
 
 
 def parse_general_points(points_text: str) -> int:
@@ -1168,6 +1296,22 @@ def main(config_redeem_only: bool = False) -> None:
         inject_local_storage_session(page, device_code, auth_data_file)
         page.refresh()
         time.sleep(2)
+
+        # 会话归属校验：浏览器配置目录在多个任务间共享，可能残留其他账号的登录态。
+        # 不校验会导致挂机时长记到别的账号上（与 AI 对话脚本的同款防护）。
+        auth_data = read_auth_data(page)
+        mobile = auth_data.get("mobilephone") if auth_data else None
+        if mobile and str(mobile) != str(username):
+            print(
+                f"[!] 检测到残留会话属于其他账号（{mobile}），"
+                f"清除登录态后改用 {username} 重新登录。"
+            )
+            clear_session(page)
+            page.get(LOGIN_URL)
+            if not execute_login(page, username, password):
+                print("[!] 账号归属校验后重新登录失败。")
+                sys.exit(1)
+            save_auth_data(page, auth_data_file)
 
         relogin_attempts = 0
         max_relogin_attempts = 3
