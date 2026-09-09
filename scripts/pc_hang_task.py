@@ -9,6 +9,7 @@ import datetime
 import hashlib
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -35,6 +36,10 @@ POINTS_TASK_LIST_URL = (
     "https://desk.ctyun.cn/selforder/api/marketing/userPoints/getTaskList"
 )
 RESTART_AT_FILE = os.getenv("CTYUN_RESTART_AT_FILE") or "/tmp/ctyun_restart_at"
+
+# 平台"使用1小时"只统计有输入活动的会话（纯挂网页不计），
+# 因此挂机期间必须定期模拟鼠标移动保持"使用中"判定。
+ACTIVITY_INTERVAL_SECONDS = 90
 
 # 平台接口签名常量（与后端 ctyun_api 保持一致）
 DEVICE_TYPE = "60"
@@ -393,6 +398,52 @@ def wait_desktop_opened(page: ChromiumPage, timeout: int = 270) -> bool:
     return False
 
 
+def detect_connect_failure(page: ChromiumPage) -> bool:
+    """检测云电脑页面是否出现「连接失败，请退出重试」类提示。"""
+    for selector in (
+        "xpath://*[contains(text(), '连接失败')]",
+        "xpath://*[contains(text(), '请退出重试')]",
+    ):
+        try:
+            if page.ele(selector, timeout=0.5):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def reenter_desktop(page: ChromiumPage, max_attempts: int = 3) -> bool:
+    """桌面会话异常（连接失败等）时：回桌面列表重新进入云电脑。"""
+    for attempt in range(1, max_attempts + 1):
+        print(
+            f"[*] 尝试重新进入云电脑 ({attempt}/{max_attempts})...",
+            flush=True,
+        )
+        try:
+            page.get(DESKTOP_URL)
+        except Exception as ex:
+            print(f"[!] 打开桌面列表失败: {ex}", flush=True)
+        time.sleep(2)
+        wait_desktop_list_refresh_done(page, timeout=60)
+        state = get_desktop_state(page)
+        print(f"[*] desktop-list 状态: {state}", flush=True)
+        if state == "desktop_entered_auto":
+            return True
+        if state == "has_pc_button":
+            if click_enter_ai_pc(page) and wait_desktop_opened(page, timeout=240):
+                print("[*] 重新进入云电脑成功。", flush=True)
+                try:
+                    page.listen.start(POINTS_TASK_LIST_URL)
+                except Exception:
+                    pass
+                return True
+        if state == "auth_expired":
+            return False
+        time.sleep(10)
+    print("[!] 重新进入云电脑失败，已达重试上限。", flush=True)
+    return False
+
+
 # 积分中心入口候选选择器：平台改版后文本/标签可能变化，逐个尝试
 POINTS_ENTRY_SELECTORS = [
     "xpath://span[contains(string(), '积分中心')]",
@@ -521,6 +572,7 @@ def wait_for_points_with_points(
     packet_retry_count = 0
     refresh_retry_count = 0
     last_progress_update_time = time.time()
+    last_activity_time = 0.0  # 上次模拟鼠标活动的时间（0 = 立即执行一次）
     redeem_config_checked = False
     url = "https://desk.ctyun.cn/selforder/api/marketing/userPoints/getTaskList"
     # 初始状态开启监听和界面
@@ -627,6 +679,32 @@ def wait_for_points_with_points(
             # 刷新页面后，必须重置最后更新时间戳，避免下一轮循环直接再次触发刷新
             last_progress_update_time = time.time()
             continue
+
+        # 云电脑桌面会话可能因强退/残留出现「连接失败，请退出重试」，
+        # 检测到就自动退出并重进，否则整段挂机都是无效的。
+        if detect_connect_failure(page):
+            print(f"\n[-] {current_time_str} 检测到「连接失败」提示，自动退出重进。", flush=True)
+            try:
+                page.listen.stop()
+            except Exception:
+                pass
+            if not reenter_desktop(page):
+                print("[-] 重新进入云电脑失败，任务终止。", flush=True)
+                sys.exit(1)
+            packet = None
+            fallback_hinted = False
+            continue
+
+        # 定期模拟鼠标移动（CDP 真实输入事件，云电脑内光标会实际移动），
+        # 让平台判定桌面"使用中"，否则挂机时长不累计（实测纯挂网页进度恒 0）。
+        if time.time() - last_activity_time >= ACTIVITY_INTERVAL_SECONDS:
+            try:
+                page.actions.move(
+                    random.randint(-150, 150), random.randint(-100, 100), duration=0.4)
+                print(f"\r[-] {current_time_str} 已模拟鼠标活动，保持使用中状态", flush=True)
+            except Exception as act_ex:
+                print(f"\n[!] 模拟鼠标活动失败: {act_ex}", flush=True)
+            last_activity_time = time.time()
 
         time.sleep(step)
         remaining -= step
