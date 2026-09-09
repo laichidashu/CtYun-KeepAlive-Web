@@ -6,6 +6,7 @@ import argparse
 import atexit  # 新增导入 atexit 模块
 import calendar
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -34,6 +35,14 @@ POINTS_TASK_LIST_URL = (
     "https://desk.ctyun.cn/selforder/api/marketing/userPoints/getTaskList"
 )
 RESTART_AT_FILE = os.getenv("CTYUN_RESTART_AT_FILE") or "/tmp/ctyun_restart_at"
+
+# 平台接口签名常量（与后端 ctyun_api 保持一致）
+DEVICE_TYPE = "60"
+VERSION = "103020001"
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def find_browser() -> str:
@@ -500,6 +509,7 @@ def wait_for_points_with_points(
     step: int = 10,
     running_in_docker: bool = False,
     config_redeem_only: bool = False,
+    device_code: str = "",
 ) -> None:
     """进入云电脑后挂机等待积分，结束前打印积分详情。"""
     print("[*] 已进入云电脑")
@@ -518,7 +528,7 @@ def wait_for_points_with_points(
     current_points = open_points_center_and_print(page)
     packet = page.listen.wait(timeout=20)
     # 抓不到数据包时的兜底请求头（直接用浏览器 Cookie 调接口）
-    api_headers = clean_headers(packet.request.headers) if packet else build_headers_from_page(page)
+    api_headers = clean_headers(packet.request.headers) if packet else build_headers_from_page(page, device_code)
     fallback_hinted = False
     while remaining > 0:
         # 开始挂机，获取积分中心数据，然后循环判断是否完成挂机
@@ -532,7 +542,7 @@ def wait_for_points_with_points(
                 )
                 fallback_hinted = True
             if not api_headers:
-                api_headers = build_headers_from_page(page)
+                api_headers = build_headers_from_page(page, device_code)
             time.sleep(10)
             remaining -= 10
             # 每隔一段时间再尝试一次打开积分中心并抓包
@@ -600,9 +610,11 @@ def wait_for_points_with_points(
 
         time_since_last_update = time.time() - last_progress_update_time
 
-        if time_since_last_update >= max_time:
+        # 只有进度曾经 >0 再停滞才刷新；进度恒 0 时刷新会反复断开云电脑会话，
+        # 导致使用时长永远无法累计（实测刷新即清零），绝对不能刷。
+        if last_progress > 0 and time_since_last_update >= max_time:
             refresh_retry_count += 1
-            print(f"\n[-] {current_time_str} 刷新页面 ({refresh_retry_count}/13)")
+            print(f"\n[-] {current_time_str} 进度停滞，刷新页面 ({refresh_retry_count}/{refresh_retry_count_max})")
 
             if refresh_retry_count >= refresh_retry_count_max:
                 print(f"[-] {current_time_str} 刷新页面重试次数达到上限，程序终止。")
@@ -692,39 +704,42 @@ def clean_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return clean
 
 
-def build_headers_from_page(page: ChromiumPage) -> Dict[str, str]:
-    """从浏览器 Cookie 构造平台接口请求头。
+def build_headers_from_page(page: ChromiumPage, device_code: str = "") -> Dict[str, str]:
+    """用页面登录态（localStorage.authData）构造平台接口签名请求头。
 
-    用途：无法捕获「积分中心」数据包时（页面改版 / 入口不存在）的兜底方案，
-    直接携带登录态请求 getTaskList 查询挂机进度。
+    平台 selforder 接口走 ctg-* 签名头鉴权（不依赖 Cookie），签名字段来自
+    登录态里的 userId / tenantId / secretKey——与后端 ctyun_api 完全一致。
+    用途：无法打开「积分中心」捕获数据包时，直接查询挂机进度。
     """
-    try:
-        cookies = page.cookies(all_domains=True) or []
-    except Exception:
-        cookies = []
-
-    parts = []
-    for item in cookies:
-        name = item.get("name")
-        domain = item.get("domain") or ""
-        if not name or "ctyun.cn" not in domain:
-            continue
-        parts.append(f"{name}={item.get('value', '')}")
-    if not parts:
+    auth = read_auth_data(page) or {}
+    user_id = str(auth.get("userId") or "")
+    tenant_id = str(auth.get("tenantId") or "")
+    secret_key = str(auth.get("secretKey") or "")
+    if not user_id or not secret_key:
         return {}
 
-    try:
-        user_agent = page.run_js("return navigator.userAgent;") or ""
-    except Exception:
-        user_agent = ""
+    if not device_code:
+        try:
+            device_code = page.run_js("return localStorage.getItem('web_device_code');") or ""
+        except Exception:
+            device_code = ""
 
+    ts = str(int(time.time() * 1000))
+    signature_source = "%s%s%s%s%s%s%s" % (
+        DEVICE_TYPE, ts, tenant_id, ts, user_id, VERSION, secret_key
+    )
     return {
-        "Cookie": "; ".join(parts),
-        "User-Agent": user_agent
-        or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "User-Agent": UA,
+        "ctg-devicetype": DEVICE_TYPE,
+        "ctg-version": VERSION,
+        "ctg-devicecode": str(device_code or ""),
+        "ctg-userid": user_id,
+        "ctg-tenantid": tenant_id,
+        "ctg-timestamp": ts,
+        "ctg-requestid": ts,
+        "ctg-signaturestr": hashlib.md5(signature_source.encode("utf-8")).hexdigest(),
+        "referer": "https://pc.ctyun.cn/",
         "Accept": "application/json, text/plain, */*",
-        "Referer": "https://pc.ctyun.cn/",
-        "Origin": "https://pc.ctyun.cn",
     }
 
 
@@ -1387,6 +1402,7 @@ def main(config_redeem_only: bool = False) -> None:
             HANG_SECONDS,
             running_in_docker=running_in_docker,
             config_redeem_only=config_redeem_only,
+            device_code=device_code,
         )
         page.quit()
 
