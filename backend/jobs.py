@@ -307,7 +307,8 @@ class JobService:
                         time.sleep(MUTEX_QUEUE_POLL_SECONDS)
                         waited += MUTEX_QUEUE_POLL_SECONDS
                         with cls._lock:
-                            still_enabled = job.enabled
+                            # stop 会把 running 置 False：排队线程据此退出，不再抢锁执行
+                            still_enabled = job.enabled and job.running
                         if not still_enabled:
                             break
                         if mutex.BrowserMutex.try_acquire(job.type, job.name):
