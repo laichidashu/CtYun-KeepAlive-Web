@@ -35,6 +35,9 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """客户端主动断开（SSE 关闭、超时等）属正常现象，不打印堆栈。"""
 
     daemon_threads = True
+    # 关键：Windows 下 SO_REUSEADDR 允许两个实例绑定同一端口，会导致
+    # 新旧实例并存、互斥锁/任务状态分裂。必须禁用，绑定失败直接退出。
+    allow_reuse_address = False
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]
@@ -107,17 +110,12 @@ def main():
 
     # 6. Web 服务
     port = int(os.environ.get("PORT", "8080") or "8080")
-    # 端口占用预检：Windows 下 SO_REUSEADDR 允许重复绑定，会导致新旧实例并存
-    import socket as _socket
-    _probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     try:
-        _probe.bind(("0.0.0.0", port))
-        _probe.close()
+        server = QuietThreadingHTTPServer(("0.0.0.0", port), httpd.Handler)
     except OSError:
         logs.fail("系统", "端口 %d 已被占用（可能已有实例在运行），本次启动退出。"
-                  "如需重启请先结束旧进程。" % port)
+                  "请勿重复双击「启动服务」；如需重启请先结束旧进程。" % port)
         return
-    server = QuietThreadingHTTPServer(("0.0.0.0", port), httpd.Handler)
     logs.write_line("[系统] Web 服务已启动，监听地址：http://localhost:%d" % port,
                     logs.LEVEL_INFO, "系统")
     for ip in _lan_ips():
