@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -444,6 +445,116 @@ def reenter_desktop(page: ChromiumPage, max_attempts: int = 3) -> bool:
     return False
 
 
+def in_page_api(
+    page: ChromiumPage,
+    path: str,
+    method: str = "POST",
+    body: str = "",
+    content_type: str = "application/json",
+    query: str = "",
+) -> tuple:
+    """在页面内发起同步 XHR（相对路径同源请求，自动携带会话 Cookie）。
+
+    用于调用 pc.ctyun.cn 自身的桌面管理接口（pageDesktop / operate / status），
+    无需额外签名，Cookie 由 withCredentials 自动附带。
+
+    Returns:
+        (status, text)：HTTP 状态码与响应文本；任何异常返回 (0, "")。
+    """
+    url = path + (query or "")
+    js = """
+    const xhr = new XMLHttpRequest();
+    xhr.open(arguments[1], arguments[0], false);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Content-Type', arguments[3]);
+    xhr.send(arguments[2] || null);
+    return JSON.stringify({status: xhr.status, text: xhr.responseText});
+    """
+    try:
+        raw = page.run_js(js, url, method, body, content_type)
+        data = json.loads(raw) if raw else {}
+        return int(data.get("status") or 0), str(data.get("text") or "")
+    except Exception as e:
+        print(f"[!] 页面内接口请求失败 ({method} {url}): {e}", flush=True)
+        return 0, ""
+
+
+def get_desktop_id(page: ChromiumPage) -> Optional[str]:
+    """获取当前云电脑 desktopId：优先调平台接口，失败再从 URL 兜底提取。"""
+    status, text = in_page_api(
+        page,
+        "api/desktop/client/pageDesktop",
+        method="POST",
+        body=json.dumps({"pageNo": 1, "pageSize": 20, "sortType": "createTimeV1"}),
+    )
+    if status == 200 and text:
+        try:
+            data = json.loads(text) or {}
+            desktop_list = ((data.get("data") or {}).get("desktopList")) or []
+            for item in desktop_list:
+                # 响应字段名可能是 desktopId 或 id，两者都兼容
+                desktop_id = item.get("desktopId") or item.get("id")
+                if desktop_id:
+                    return str(desktop_id)
+        except Exception as e:
+            print(f"[!] 解析 desktopList 失败: {e}", flush=True)
+    # 兜底：从当前页面 URL（/desktop?id=xxx）提取
+    match = re.search(r"desktop\?id=([A-Za-z0-9_-]+)", page.url or "")
+    if match:
+        return match.group(1)
+    print("[!] 未能获取 desktopId（接口与 URL 均失败）。", flush=True)
+    return None
+
+
+def reboot_desktop(page: ChromiumPage, timeout: int = 420) -> bool:
+    """调用平台接口重启卡死的云电脑桌面（operationType=3 为 REBOOT）。"""
+    desktop_id = get_desktop_id(page)
+    if not desktop_id:
+        print("[!] 无 desktopId，跳过桌面重启。", flush=True)
+        return False
+    print(f"[*] 正在重启云电脑桌面 (desktopId={desktop_id})...", flush=True)
+    status, text = in_page_api(
+        page,
+        "api/desktop/client/operate",
+        method="POST",
+        body=f"desktopId={desktop_id}&operationType=3",
+        content_type="application/x-www-form-urlencoded",
+    )
+    snippet = (text or "")[:200]
+    if not (200 <= status < 300):
+        print(f"[-] 重启指令下发失败: status={status}, resp={snippet}", flush=True)
+        return False
+    print(f"[*] 重启指令已下发: status={status}, resp={snippet}", flush=True)
+
+    # 轮询桌面状态仅供观察：云电脑重启通常 1-5 分钟，状态接口读不到不算失败
+    last_state = ""
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        time.sleep(15)
+        st, body = in_page_api(
+            page,
+            "api/desktop/client/status",
+            method="GET",
+            query=f"?desktopId={desktop_id}&specifiedCertCategory=1",
+        )
+        state = ""
+        if st == 200 and body:
+            try:
+                data = json.loads(body) or {}
+                payload = data.get("data")
+                if isinstance(payload, dict):
+                    state = str(payload.get("status") or payload.get("state") or "")
+                elif payload is not None:
+                    state = str(payload)
+            except Exception:
+                state = ""
+        if state and state != last_state:
+            print(f"[*] 云电脑状态: {state}", flush=True)
+            last_state = state
+    print("[*] 重启状态轮询结束，继续后续流程。", flush=True)
+    return True
+
+
 # 积分中心入口候选选择器：平台改版后文本/标签可能变化，逐个尝试
 POINTS_ENTRY_SELECTORS = [
     "xpath://span[contains(string(), '积分中心')]",
@@ -573,6 +684,7 @@ def wait_for_points_with_points(
     refresh_retry_count = 0
     last_progress_update_time = time.time()
     last_activity_time = 0.0  # 上次模拟鼠标活动的时间（0 = 立即执行一次）
+    connect_fail_count = 0  # 「连接失败」出现次数（重进成功但会话仍失败时只增不减）
     redeem_config_checked = False
     url = "https://desk.ctyun.cn/selforder/api/marketing/userPoints/getTaskList"
     # 初始状态开启监听和界面
@@ -682,13 +794,32 @@ def wait_for_points_with_points(
 
         # 云电脑桌面会话可能因强退/残留出现「连接失败，请退出重试」，
         # 检测到就自动退出并重进，否则整段挂机都是无效的。
+        # 注意 reenter_desktop 即使会话立刻再次失败也返回 True，
+        # 因此只能按「出现次数」判断是否升级为重启桌面。
         if detect_connect_failure(page):
-            print(f"\n[-] {current_time_str} 检测到「连接失败」提示，自动退出重进。", flush=True)
+            connect_fail_count += 1
+            print(
+                f"\n[-] {current_time_str} 检测到「连接失败」提示"
+                f"（第 {connect_fail_count} 次），自动退出重进。",
+                flush=True,
+            )
             try:
                 page.listen.stop()
             except Exception:
                 pass
-            if not reenter_desktop(page):
+            if connect_fail_count >= 3:
+                # 多次重进无效，说明服务端桌面会话卡死，调用平台接口重启桌面
+                print("[-] 多次重进仍连接失败，尝试重启云电脑桌面。", flush=True)
+                reboot_ok = reboot_desktop(page)
+                connect_fail_count = 0
+                if not reenter_desktop(page):
+                    print(
+                        f"[-] 重启后重新进入云电脑失败（重启下发={'成功' if reboot_ok else '失败'}），"
+                        f"任务终止。",
+                        flush=True,
+                    )
+                    sys.exit(1)
+            elif not reenter_desktop(page):
                 print("[-] 重新进入云电脑失败，任务终止。", flush=True)
                 sys.exit(1)
             packet = None
@@ -1474,6 +1605,21 @@ def main(config_redeem_only: bool = False) -> None:
             print(f"[*] 登录成功账号: {mobile}")
         else:
             print("[-] 登录成功，但未能读取 authData.mobilephone。")
+
+        # 首次进入即出现「连接失败」时先自救：重进一次；仍失败说明
+        # 服务端桌面会话卡死，重启桌面后再重进，避免整段挂机无效。
+        if detect_connect_failure(page):
+            print("[*] 首次进入云电脑即检测到「连接失败」，先尝试重新进入。", flush=True)
+            try:
+                page.listen.stop()
+            except Exception:
+                pass
+            if not reenter_desktop(page) or detect_connect_failure(page):
+                print("[-] 重进后仍连接失败，尝试重启云电脑桌面。", flush=True)
+                reboot_desktop(page)
+                if not reenter_desktop(page):
+                    print("[!] 重启后仍无法进入云电脑，任务终止。", flush=True)
+                    sys.exit(1)
 
         wait_for_points_with_points(
             page,
