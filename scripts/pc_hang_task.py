@@ -26,6 +26,9 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 LOGIN_URL = "https://pc.ctyun.cn/#/login"
 DESKTOP_URL = "https://pc.ctyun.cn/#/desktop-list"
+# 桌面管理接口网关：SPA 从 pc.ctyun.cn 页面跨域调用此地址（getAPIHost 默认值），
+# 鉴权走 CTG-* 签名头而非 Cookie；同源相对路径 /api/... 会被 nginx 404。
+DESKTOP_API_BASE = "https://desk.ctyun.cn:8810"
 DESKTOP_DETAIL_URL_KEY = "/desktop?id="
 HANG_SECONDS = int(os.getenv("CTYUN_HANG_SECONDS") or 80 * 60)
 REWARD_LIST_URL = (
@@ -452,52 +455,82 @@ def in_page_api(
     body: str = "",
     content_type: str = "application/json",
     query: str = "",
+    headers: Optional[Dict[str, str]] = None,
 ) -> tuple:
-    """在页面内发起同步 XHR（相对路径同源请求，自动携带会话 Cookie）。
+    """在页面内发起同步 XHR 请求。
 
-    用于调用 pc.ctyun.cn 自身的桌面管理接口（pageDesktop / operate / status），
-    无需额外签名，Cookie 由 withCredentials 自动附带。
+    - path 为相对路径时：同源请求，withCredentials=true 自动携带会话 Cookie。
+    - path 为 http 开头的绝对地址时：跨域请求（如 desk.ctyun.cn:8810 网关），
+      鉴权依赖调用方传入的 CTG-* 签名头，withCredentials 置 false。
 
     Returns:
         (status, text)：HTTP 状态码与响应文本；任何异常返回 (0, "")。
     """
     url = path + (query or "")
+    hdrs = dict(headers or {})
+    is_absolute = url.startswith("http")
     js = """
     const xhr = new XMLHttpRequest();
     xhr.open(arguments[1], arguments[0], false);
-    xhr.withCredentials = true;
+    xhr.withCredentials = arguments[5];
     xhr.setRequestHeader('Content-Type', arguments[3]);
+    const hdrs = arguments[4] || {};
+    for (var k in hdrs) { xhr.setRequestHeader(k, hdrs[k]); }
     xhr.send(arguments[2] || null);
     return JSON.stringify({status: xhr.status, text: xhr.responseText});
     """
     try:
-        raw = page.run_js(js, url, method, body, content_type)
+        raw = page.run_js(js, url, method, body, content_type, hdrs, not is_absolute)
         data = json.loads(raw) if raw else {}
-        return int(data.get("status") or 0), str(data.get("text") or "")
+        status = int(data.get("status") or 0)
+        text = str(data.get("text") or "")
+        # status==0 通常是 CORS 拦截或网络失败，提示排查方向
+        if is_absolute and status == 0:
+            print(
+                f"[!] 跨域接口请求无响应 ({method} {url})，"
+                f"可能被 CORS 拦截或网关不可达。",
+                flush=True,
+            )
+            return 0, ""
+        return status, text
     except Exception as e:
         print(f"[!] 页面内接口请求失败 ({method} {url}): {e}", flush=True)
         return 0, ""
 
 
 def get_desktop_id(page: ChromiumPage) -> Optional[str]:
-    """获取当前云电脑 desktopId：优先调平台接口，失败再从 URL 兜底提取。"""
-    status, text = in_page_api(
-        page,
-        "api/desktop/client/pageDesktop",
-        method="POST",
-        body=json.dumps({"pageNo": 1, "pageSize": 20, "sortType": "createTimeV1"}),
-    )
-    if status == 200 and text:
-        try:
-            data = json.loads(text) or {}
-            desktop_list = ((data.get("data") or {}).get("desktopList")) or []
-            for item in desktop_list:
-                # 响应字段名可能是 desktopId 或 id，两者都兼容
-                desktop_id = item.get("desktopId") or item.get("id")
-                if desktop_id:
-                    return str(desktop_id)
-        except Exception as e:
-            print(f"[!] 解析 desktopList 失败: {e}", flush=True)
+    """获取当前云电脑 desktopId：优先调 8810 网关接口，失败再从 URL 兜底提取。
+
+    注：SPA 调用桌面接口时不带 X-AUTH-TOKEN（仅在活动桌面连接的
+    connectionInfo.desktopInfo.token 中存在，列表页拿不到），仅靠 CTG-* 签名头。
+    """
+    hdrs = clean_headers(build_headers_from_page(page))
+    if not hdrs:
+        print("[!] 未能从页面登录态构造签名请求头，跳过网关接口。", flush=True)
+    else:
+        status, text = in_page_api(
+            page,
+            DESKTOP_API_BASE + "/api/desktop/client/pageDesktop",
+            method="POST",
+            body=json.dumps({"pageNo": 1, "pageSize": 20, "sortType": "createTimeV1"}),
+            headers=hdrs,
+        )
+        if status == 200 and text:
+            try:
+                data = json.loads(text) or {}
+                desktop_list = ((data.get("data") or {}).get("desktopList")) or []
+                for item in desktop_list:
+                    # 响应字段名可能是 desktopId 或 id，两者都兼容
+                    desktop_id = item.get("desktopId") or item.get("id")
+                    if desktop_id:
+                        return str(desktop_id)
+            except Exception as e:
+                print(f"[!] 解析 desktopList 失败: {e}", flush=True)
+        else:
+            print(
+                f"[-] pageDesktop 接口请求异常: status={status}, resp={(text or '')[:200]}",
+                flush=True,
+            )
     # 兜底：从当前页面 URL（/desktop?id=xxx）提取
     match = re.search(r"desktop\?id=([A-Za-z0-9_-]+)", page.url or "")
     if match:
@@ -507,18 +540,23 @@ def get_desktop_id(page: ChromiumPage) -> Optional[str]:
 
 
 def reboot_desktop(page: ChromiumPage, timeout: int = 420) -> bool:
-    """调用平台接口重启卡死的云电脑桌面（operationType=3 为 REBOOT）。"""
+    """调用 8810 网关接口重启卡死的云电脑桌面（operationType=3 为 REBOOT）。"""
     desktop_id = get_desktop_id(page)
     if not desktop_id:
         print("[!] 无 desktopId，跳过桌面重启。", flush=True)
         return False
+    hdrs = clean_headers(build_headers_from_page(page))
+    if not hdrs:
+        print("[!] 未能从页面登录态构造签名请求头，跳过桌面重启。", flush=True)
+        return False
     print(f"[*] 正在重启云电脑桌面 (desktopId={desktop_id})...", flush=True)
     status, text = in_page_api(
         page,
-        "api/desktop/client/operate",
+        DESKTOP_API_BASE + "/api/desktop/client/operate",
         method="POST",
         body=f"desktopId={desktop_id}&operationType=3",
         content_type="application/x-www-form-urlencoded",
+        headers=hdrs,
     )
     snippet = (text or "")[:200]
     if not (200 <= status < 300):
@@ -533,9 +571,10 @@ def reboot_desktop(page: ChromiumPage, timeout: int = 420) -> bool:
         time.sleep(15)
         st, body = in_page_api(
             page,
-            "api/desktop/client/status",
+            DESKTOP_API_BASE + "/api/desktop/client/status",
             method="GET",
             query=f"?desktopId={desktop_id}&specifiedCertCategory=1",
+            headers=hdrs,
         )
         state = ""
         if st == 200 and body:
