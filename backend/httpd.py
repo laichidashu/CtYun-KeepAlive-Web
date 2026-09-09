@@ -873,8 +873,21 @@ class Handler(BaseHTTPRequestHandler):
         job = _job_service().find(body.get("id") or "")
         if job is None:
             return self._ok_web(success=False, msg="任务不存在")
-        # best-effort：置 Running=false，退场依赖脚本超时/协作退出
+        # 真正终止脚本进程并释放浏览器互斥，避免停止后其它任务被永久挡住
+        killed = False
+        try:
+            import scriptrunner
+            killed = scriptrunner.kill_running(job.account_user or "")
+        except Exception:
+            killed = False
+        try:
+            import mutex
+            mutex.BrowserMutex.release(job.type)
+        except Exception:
+            pass
         job.running = False
+        logs.info("任务", "[%s] 已手动停止（终止进程：%s，浏览器互斥已释放）"
+                  % (job.name, "是" if killed else "无可终止进程"))
         return self._ok_web(success=True)
 
     def _ep_jobs_history(self):
