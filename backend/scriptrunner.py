@@ -21,6 +21,10 @@ from logs import mask_user
 
 _TIMEOUT_KILL_WAIT = 5
 
+# 正在运行的脚本进程登记表：key=账号（或任务键） → subprocess.Popen
+_RUNNING_LOCK = threading.Lock()
+_RUNNING = {}
+
 
 def detect_python() -> str:
     """优先配置项，否则探测 python3 / python。"""
@@ -118,11 +122,42 @@ def _trim_summary(text: str) -> str:
     return text[-500:]
 
 
+def _register(key: str, proc: subprocess.Popen) -> None:
+    """登记正在运行的脚本进程，供「停止任务」终止。"""
+    if not key:
+        return
+    with _RUNNING_LOCK:
+        _RUNNING[key] = proc
+
+
+def _unregister(key: str) -> None:
+    if not key:
+        return
+    with _RUNNING_LOCK:
+        _RUNNING.pop(key, None)
+
+
+def kill_running(key: str) -> bool:
+    """终止指定键名（账号）下正在运行的脚本进程（整树强杀）。返回是否找到并终止。"""
+    if not key:
+        return False
+    with _RUNNING_LOCK:
+        proc = _RUNNING.get(key)
+    if proc is None:
+        return False
+    try:
+        kill_tree(proc)
+        return True
+    except Exception:
+        return False
+
+
 def run(account, script_path: str, hang_seconds: int, timeout_minutes: int) -> dict:
     """运行脚本。返回 {exitCode, timedOut, startFailed, summary}。"""
     result = {"exitCode": 0, "timedOut": False, "startFailed": False, "summary": ""}
     python_exe = detect_python()
     tag = ("挂机" if script_path == Paths.pc_hang_script else "AI对话") + "[" + mask_user(account.user) + "]"
+    run_key = account.user or ""
 
     env = os.environ.copy()
     env.update({
@@ -153,6 +188,8 @@ def run(account, script_path: str, hang_seconds: int, timeout_minutes: int) -> d
         result["summary"] = "启动失败：" + str(ex)
         return result
 
+    # 登记运行中的进程，供「停止任务」真正终止脚本
+    _register(run_key, proc)
     out_tail = []  # 尾部缓冲（上限 64 行，超出丢最旧）
     err_tail = []
     _TAIL_MAX = 64
@@ -204,4 +241,5 @@ def run(account, script_path: str, hang_seconds: int, timeout_minutes: int) -> d
 
     combined = "\n".join(out_tail) + "\n" + "\n".join(err_tail)
     result["summary"] = _trim_summary(combined)
+    _unregister(run_key)
     return result
