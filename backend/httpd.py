@@ -57,6 +57,69 @@ _platform_all_state = {
     "total": {"done": 0, "doing": 0, "todo": 0},
 }
 
+# 单账号平台任务查询结果缓存（用户点「平台任务 ▾」时刷新）。
+# 与全量快照分开保存，避免污染全量统计的 total；仅供任务汇总判断平台是否达标。
+_platform_user_lock = threading.Lock()
+_platform_user_cache = {}                      # user → {"tasks": [...], "at": ts}
+
+# 平台任务快照/缓存落盘：让「已完成（平台达标）」状态在服务重启后依然正确。
+# 只信任**当天**的快照（平台任务按天重置，旧快照会误判）。
+_PLATFORM_CACHE_FILE = "platform_tasks_cache.json"
+_platform_cache_loaded = False
+
+
+def _platform_cache_path() -> str:
+    return os.path.join(Paths.data_dir, _PLATFORM_CACHE_FILE)
+
+
+def _save_platform_cache():
+    """把最近一次全量快照落盘（失败不影响主流程）。"""
+    try:
+        with _platform_all_lock:
+            accounts = list(_platform_all_state.get("accounts") or [])
+            finished = _platform_all_state.get("finishedAt") or 0
+        if not accounts:
+            return
+        path = _platform_cache_path()
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"finishedAt": finished, "accounts": accounts},
+                      f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _ensure_platform_cache_loaded():
+    """内存快照为空时，首次从磁盘恢复（仅在服务重启后生效一次）。"""
+    global _platform_cache_loaded
+    if _platform_cache_loaded:
+        return
+    _platform_cache_loaded = True
+    with _platform_all_lock:
+        if _platform_all_state.get("accounts"):
+            return
+    try:
+        with open(_platform_cache_path(), "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        accounts = snap.get("accounts") or []
+        if accounts:
+            with _platform_all_lock:
+                _platform_all_state["accounts"] = accounts
+                _platform_all_state["finishedAt"] = snap.get("finishedAt") or 0
+    except Exception:
+        pass
+
+
+def _same_local_day(ts) -> bool:
+    """时间戳是否与「现在」是同一个本地自然日。"""
+    try:
+        a = time.localtime(float(ts))
+        b = time.localtime()
+        return (a.tm_year, a.tm_yday) == (b.tm_year, b.tm_yday)
+    except Exception:
+        return False
+
 
 def _platform_all_worker():
     """逐个账号登录平台拉取全部积分任务，汇总完成/进行中/未完成数量。"""
@@ -99,6 +162,61 @@ def _platform_all_worker():
         _platform_all_state["ok"] = any(a["ok"] for a in results)
     logs.info("任务", "[平台任务] 全量统计完成（%d 个账号）：已完成 %d / 进行中 %d / 未完成 %d"
               % (len(results), total["done"], total["doing"], total["todo"]))
+    _save_platform_cache()
+
+
+# 平台任务名 → 定时任务类型 的匹配关键字（匹配一律用平台原名）
+_PLATFORM_TASK_KEYWORDS = {
+    "pc_hang": ("使用1小时", "云电脑挂机"),
+    "ai_chat": ("与AI对话", "对话"),
+}
+
+
+def _platform_done_lookup():
+    """由「全量快照 + 单账号查询缓存」构造 {user: {jobType: done}}。
+
+    用途：任务汇总里判断「该账号的平台任务是否今日已达标」——若已达标，
+    定时任务即使今天还没到点执行，也不应显示「今日未执行」（与平台面板自相矛盾）。
+    两处都没有数据的账号不返回（=未知），前端保持原状态显示。
+    """
+    _ensure_platform_cache_loaded()
+    with _platform_all_lock:
+        accounts = list(_platform_all_state.get("accounts") or [])
+        finished = _platform_all_state.get("finishedAt") or 0
+    if not _same_local_day(finished):
+        accounts = []          # 旧快照（昨日及更早）不得用于判断「今日达标」
+    with _platform_user_lock:
+        cache = dict(_platform_user_cache)
+
+    def _per_of(tasks):
+        per = {}
+        for t in (tasks or []):
+            if not isinstance(t, dict):
+                continue
+            name = str(t.get("name") or "")
+            for jt, kws in _PLATFORM_TASK_KEYWORDS.items():
+                if any(k in name for k in kws):
+                    per[jt] = (t.get("done") is True)
+        return per
+
+    out = {}
+    for acc in accounts:
+        if not isinstance(acc, dict) or not acc.get("ok"):
+            continue
+        user = str(acc.get("user") or "")
+        if not user:
+            continue
+        per = _per_of(acc.get("tasks"))
+        if per:
+            out[user] = per
+    # 单账号查询缓存通常更新更近，覆盖同 user 的结果（同样只认当天）
+    for user, item in cache.items():
+        if not _same_local_day((item or {}).get("at")):
+            continue
+        per = _per_of((item or {}).get("tasks"))
+        if per:
+            out[str(user)] = per
+    return out
 
 
 # ---------- Program.cs 辅助函数移植 ----------
@@ -716,7 +834,18 @@ class Handler(BaseHTTPRequestHandler):
     def _ep_tasks_summary(self):
         if not self._authorize():
             return self._unauthorized()
-        self._json(_job_service().task_summary())
+        summary = _job_service().task_summary()
+        # 合并「最近一次全量平台任务快照」的达标信息：
+        # platformDone=true/false 表示该账号的平台任务今日已达标/未达标；
+        # null 表示未知（未拉取过快照，或该账号没有对应平台任务）。
+        lookup = _platform_done_lookup()
+        for acc in summary.get("accounts", []):
+            per = lookup.get(acc.get("accountUser") or "")
+            for t in acc.get("tasks", []):
+                t["platformDone"] = None if per is None else per.get(t.get("jobType"))
+        with _platform_all_lock:
+            summary["platformSnapshotAt"] = _platform_all_state.get("finishedAt") or 0
+        self._json(summary)
 
     def _ep_tasks_run_missing(self):
         if not self._authorize():
@@ -748,6 +877,9 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"success": False, "msg": err, "user": user, "tasks": []})
             done_n = sum(1 for t in tasks if t["done"] is True)
+            # 缓存本次结果：任务汇总据此显示「已完成（平台达标）」
+            with _platform_user_lock:
+                _platform_user_cache[acc.user] = {"tasks": tasks, "at": time.time()}
             logs.info("任务", "[平台任务] %s 实时查询：%d 项任务，已完成 %d"
                       % (acc.user, len(tasks), done_n))
             self._json({"success": True, "msg": "", "user": user, "tasks": tasks})
