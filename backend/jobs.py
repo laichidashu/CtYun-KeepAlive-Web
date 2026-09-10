@@ -47,6 +47,8 @@ class ScheduledJob:
         self.next_run_at = ""      # 空串表示无有效触发时间
         self.last_result = ""
         self.running = False       # 进程内瞬时标记，重启后复位
+        self.queued = False        # 进程内瞬时标记：正在排队等待浏览器互斥锁
+        self.run_started_at = ""   # 进程内瞬时标记：本次运行开始时间（前端横幅计时用）
 
     def to_dict(self):
         return {
@@ -63,6 +65,8 @@ class ScheduledJob:
             "nextRunAt": self.next_run_at,
             "lastResult": self.last_result,
             "running": self.running,
+            "queued": self.queued,
+            "runStartedAt": self.run_started_at,
         }
 
     @classmethod
@@ -81,6 +85,8 @@ class ScheduledJob:
         j.next_run_at = d.get("nextRunAt", "") or ""
         j.last_result = d.get("lastResult", "") or ""
         j.running = False
+        j.queued = False
+        j.run_started_at = ""
         return j
 
 
@@ -245,6 +251,9 @@ class JobService:
         try:
             with cls._lock:
                 job.running = True
+                # 本次运行开始时间：前端「当前浏览器任务」横幅据此计算已运行时长。
+                # 不写 last_run_at（其在运行结束时落盘，被随机调度用于"排明天"判定）。
+                job.run_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             logs.info("任务", "[%s] 开始执行任务：%s（%s）" % (source, job.name, job.type))
 
             record = JobRunRecord()
@@ -299,6 +308,8 @@ class JobService:
             # 2. 浏览器互斥（定时触发的任务排队等待，避免同时到点全部被跳过）
             import mutex
             if not mutex.BrowserMutex.try_acquire(job.type, job.name):
+                with cls._lock:
+                    job.queued = True  # 前端「排队等待」横幅标记
                 if source == "cron":
                     logs.info("任务", "[%s] 浏览器被占用，进入排队等待（最多 %d 分钟）"
                               % (job.name, MUTEX_QUEUE_WAIT_SECONDS // 60))
@@ -341,8 +352,10 @@ class JobService:
                               "本次按 %d 分钟执行；建议在任务里把超时调到该值以上"
                               % (job.name, job.timeout_minutes, hang_seconds, needed))
 
-            # 4. 运行脚本
-            result = scriptrunner.run(account, script_path, hang_seconds, effective_timeout)
+            # 4. 运行脚本（job_type 用于进程登记键「账号:类型」，防止同账号
+            #    并行任务互相覆盖登记表导致进程无法停止/泄漏）
+            result = scriptrunner.run(account, script_path, hang_seconds,
+                                      effective_timeout, job_type=job.type)
 
             # 5. 汇总
             ended = int(time.time())
@@ -384,6 +397,13 @@ class JobService:
             if acquired:
                 import mutex
                 mutex.BrowserMutex.release(job.type)
+            # 复位前端横幅所需的瞬时标记（execute 任何路径退出都会经过这里）
+            try:
+                with cls._lock:
+                    job.queued = False
+                    job.run_started_at = ""
+            except Exception:
+                pass
             # 随机调度：执行结束后重算下一次（last_run_at 已更新 → 排到明天随机时刻）
             if job.random_daily:
                 try:
