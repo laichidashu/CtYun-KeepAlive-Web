@@ -41,6 +41,15 @@
         return n;
     }
 
+    /**
+     * 任务是否「今日已达成」。
+     * 两种达成途径：定时任务自己跑成功（todaySuccess），
+     * 或平台侧对应任务今日已达标（platformDone，由后端合并全量平台任务快照得出）。
+     */
+    function isTaskDone(t) {
+        return !!(t && (t.todaySuccess || t.platformDone === true));
+    }
+
     /** 云电脑状态中视为"在线"的关键字。 */
     var DESKTOP_ONLINE_KEYWORDS = ['保活', '运行', '就绪', '连接', '在线'];
 
@@ -1274,7 +1283,7 @@
             (acc.tasks || []).forEach(function (t) {
                 if (t.running) {
                     stat.running += 1;
-                } else if (t.enabled && t.todaySuccess) {
+                } else if (t.enabled && isTaskDone(t)) {
                     stat.done += 1;
                 } else if (t.enabled) {
                     stat.todo += 1;
@@ -1287,10 +1296,10 @@
         s.accounts.forEach(function (acc) {
             var visible = (acc.tasks || []).filter(function (t) {
                 if (filter === 'done') {
-                    return !!t.todaySuccess;
+                    return isTaskDone(t);
                 }
                 if (filter === 'todo') {
-                    return !t.todaySuccess;
+                    return !isTaskDone(t);
                 }
                 return true;
             });
@@ -1356,12 +1365,18 @@
                     kind = 'muted'; text = '已停用';
                 } else if (t.todaySuccess) {
                     kind = 'ok'; text = '今日已完成';
+                } else if (t.platformDone === true) {
+                    // 平台侧任务今日已达标：定时任务就算还没到点执行，也不该显示「今日未执行」
+                    kind = 'ok'; text = '已完成（平台达标）';
                 } else if (t.todayRuns > 0) {
                     kind = 'err'; text = '今日失败 ×' + t.todayRuns;
                 } else {
                     kind = 'err'; text = '今日未执行';
                 }
                 tdStatus.appendChild(badge(text, kind));
+                if (t.platformDone === true && !t.todaySuccess) {
+                    tdStatus.title = '该账号的平台任务今日已达标，定时任务到点会自动预检跳过，无需重复执行。';
+                }
                 tr.appendChild(tdStatus);
                 // 今日最近一次
                 var tdLast = el('td', '', t.todayRuns > 0
@@ -2625,6 +2640,8 @@
                     clearInterval(timer);
                     state.platformAll.running = false;
                     renderTasksSummary();
+                    // 平台快照已就绪：重新拉取汇总，让各任务的「平台达标」状态生效
+                    loadTasksSummary().catch(function () { /* ignore */ });
                 }
             } catch (e) {
                 clearInterval(timer);
