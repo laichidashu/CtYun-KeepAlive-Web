@@ -292,6 +292,25 @@ def _task_done_flag(t):
     return None
 
 
+# 平台官方任务名 → Web 展示名。
+# 用户视角：「使用1小时」就是云电脑挂机（挂机就是为了把「使用1小时」进度刷满），
+# 界面上统一显示为「云电脑挂机」。**仅用于展示**，任何判定/匹配一律使用平台原名。
+TASK_DISPLAY_ALIAS = {
+    "使用1小时": "云电脑挂机",
+}
+
+
+def display_task_name(raw) -> str:
+    """把平台官方任务名映射为 Web 展示名（只影响显示，不影响进度判定）。"""
+    name = str(raw or "").strip()
+    if not name:
+        return "未命名"
+    for official, shown in TASK_DISPLAY_ALIAS.items():
+        if official in name:
+            return shown
+    return name
+
+
 def task_overview(api):
     """拉取平台全部积分任务的完成情况（供 Web 面板展示）。
 
@@ -307,7 +326,7 @@ def task_overview(api):
         if not isinstance(t, dict):
             continue
         out.append({
-            "name": str(t.get("taskDefName") or "未命名"),
+            "name": display_task_name(t.get("taskDefName")),
             "progress": _to_int(t.get("currentProgress")),
             "limit": _task_target(t),
             "done": _task_done_flag(t),
@@ -333,14 +352,15 @@ def probe_task_done(api, keyword):
     for t in tasks:
         if not isinstance(t, dict):
             continue
-        name = str(t.get("taskDefName") or "未命名")
+        # 匹配一律用平台原名，展示用映射后的名称
+        raw_name = str(t.get("taskDefName") or "未命名")
         progress = t.get("currentProgress")
-        lines.append("%s:%s" % (name, progress))
-        if keyword and keyword in name:
+        lines.append("%s:%s" % (display_task_name(raw_name), progress))
+        if keyword and keyword in raw_name:
             target = t
     desc = "平台任务[" + "; ".join(lines) + "]" if lines else "平台任务列表为空"
     if target is None:
-        return None, desc + "（未找到含「%s」的任务，无法判断）" % keyword
+        return None, desc + "（未找到含「%s」的任务，无法判断）" % display_task_name(keyword)
     return _task_done_flag(target), desc
 
 
