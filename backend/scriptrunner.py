@@ -21,9 +21,21 @@ from logs import mask_user
 
 _TIMEOUT_KILL_WAIT = 5
 
-# 正在运行的脚本进程登记表：key=账号（或任务键） → subprocess.Popen
+# 正在运行的脚本进程登记表：key = (账号, 任务类型) 组合键 → subprocess.Popen
+# browserMutexMode=PerType 时同账号 ai_chat 与 pc_hang 可并行，必须用组合键
+# 区分，否则第二个进程会覆盖第一个的登记，停止时另一进程泄漏。
 _RUNNING_LOCK = threading.Lock()
 _RUNNING = {}
+
+
+def make_run_key(account_user: str, job_type: str = "") -> str:
+    """构造进程登记键：job_type 非空时用「账号:类型」组合键，否则退化为旧键
+    （兼容非任务调用者，保持旧行为）。"""
+    user = account_user or ""
+    jtype = (job_type or "").strip()
+    if not user:
+        return ""
+    return user + ":" + jtype if jtype else user
 
 
 def detect_python() -> str:
@@ -152,12 +164,17 @@ def kill_running(key: str) -> bool:
         return False
 
 
-def run(account, script_path: str, hang_seconds: int, timeout_minutes: int) -> dict:
-    """运行脚本。返回 {exitCode, timedOut, startFailed, summary}。"""
+def run(account, script_path: str, hang_seconds: int, timeout_minutes: int,
+        job_type: str = "") -> dict:
+    """运行脚本。返回 {exitCode, timedOut, startFailed, summary}。
+
+    job_type：任务类型（如 ai_chat / pc_hang），用于区分同账号并行任务
+    的进程登记键；留空时保持旧行为（仅按账号登记）。
+    """
     result = {"exitCode": 0, "timedOut": False, "startFailed": False, "summary": ""}
     python_exe = detect_python()
     tag = ("挂机" if script_path == Paths.pc_hang_script else "AI对话") + "[" + mask_user(account.user) + "]"
-    run_key = account.user or ""
+    run_key = make_run_key(account.user, job_type)
 
     env = os.environ.copy()
     env.update({
