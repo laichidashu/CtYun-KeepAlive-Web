@@ -10,7 +10,9 @@ CtYun-KeepAlive-Web —— Python 版入口（对应 C# Program.cs Main）。
   5. 自动启动已有账号保活（登录验证后启动）
   6. Web 服务监听 0.0.0.0:PORT（默认 8080）
 """
+import atexit
 import os
+import platform
 import signal
 import sys
 import threading
@@ -68,6 +70,77 @@ def _lan_ips():
     return sorted(ips)
 
 
+# ---- pidfile：记录运行实例 PID，供端口冲突时给出明确提示 ----
+
+def _pidfile_path() -> str:
+    """pidfile 放数据目录（与其他运行时文件同目录，如 ctyun_restart_at）。"""
+    return os.path.join(Paths.data_dir, "server.pid")
+
+
+def _write_pidfile() -> None:
+    try:
+        with open(_pidfile_path(), "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except Exception as ex:
+        logs.warn("系统", "写入 pidfile 失败（不影响服务运行）：" + str(ex))
+
+
+def _remove_pidfile() -> None:
+    try:
+        os.remove(_pidfile_path())
+    except OSError:
+        pass
+
+
+def _process_alive(pid: int) -> bool:
+    """判断进程是否存活（仅用标准库）。
+
+    注意：Windows 上不能用 os.kill(pid, 0) 探测——CPython 在 Windows 把
+    os.kill 实现为 OpenProcess(PROCESS_ALL_ACCESS) + TerminateProcess，
+    对同用户进程会真的将其杀死（退出码即 sig）。故 Windows 走
+    OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetExitCodeProcess。
+    """
+    if pid <= 0:
+        return False
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            k32 = ctypes.windll.kernel32
+            handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False  # 进程不存在或无权限（无权限≈非本服务实例）
+            try:
+                exit_code = ctypes.c_ulong()
+                if k32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return exit_code.value == STILL_ACTIVE
+                return True
+            finally:
+                k32.CloseHandle(handle)
+        except Exception:
+            return False
+    # POSIX：os.kill(pid, 0) 只探测不发信号
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 进程存在但无权限发信号
+    except OSError:
+        return False
+
+
+def _read_pidfile() -> int:
+    """读取 pidfile 记录的 PID；文件缺失/损坏返回 0。"""
+    try:
+        with open(_pidfile_path(), "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+
+
 def main():
     logs.write_line("版本：v " + VERSION, logs.LEVEL_INFO, "系统")
 
@@ -113,8 +186,17 @@ def main():
     try:
         server = QuietThreadingHTTPServer(("0.0.0.0", port), httpd.Handler)
     except OSError:
-        logs.fail("系统", "端口 %d 已被占用（可能已有实例在运行），本次启动退出。"
-                  "请勿重复双击「启动服务」；如需重启请先结束旧进程。" % port)
+        old_pid = _read_pidfile()
+        if old_pid and old_pid != os.getpid() and _process_alive(old_pid):
+            logs.fail("系统", "已有实例运行中（PID %d，记录于 server.pid），请勿重复启动。"
+                      "请勿重复双击「启动服务」；如需重启请先结束旧进程（PID %d）。"
+                      "本次启动退出。" % (old_pid, old_pid))
+        else:
+            logs.fail("系统", "端口 %d 被占用：未发现存活的本服务实例"
+                      "（可能旧实例刚退出留下 TIME_WAIT，或其他程序占用了该端口）。"
+                      "请稍候重试，或用 netstat -ano | findstr :%d 结束占用进程。"
+                      "本次启动退出。" % (port, port))
+        _remove_pidfile()
         return
     logs.write_line("[系统] Web 服务已启动，监听地址：http://localhost:%d" % port,
                     logs.LEVEL_INFO, "系统")
