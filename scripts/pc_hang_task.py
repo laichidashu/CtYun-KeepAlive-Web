@@ -540,7 +540,12 @@ def get_desktop_id(page: ChromiumPage) -> Optional[str]:
 
 
 def reboot_desktop(page: ChromiumPage, timeout: int = 420) -> bool:
-    """调用 8810 网关接口重启卡死的云电脑桌面（operationType=3 为 REBOOT）。"""
+    """调用 8810 网关接口重启卡死的云电脑桌面（operationType=3 为 REBOOT）。
+
+    HTTP 非 2xx（网关/签名问题）直接判失败；业务层错误（HTTP 200 但 code
+    非 0/200，如 30010「系统处理异常」）视为瞬时故障，最多重试 3 次。
+    多次业务错误被拒时不视为致命失败，仍返回 True 让挂机流程继续重进桌面。
+    """
     desktop_id = get_desktop_id(page)
     if not desktop_id:
         print("[!] 无 desktopId，跳过桌面重启。", flush=True)
@@ -550,19 +555,54 @@ def reboot_desktop(page: ChromiumPage, timeout: int = 420) -> bool:
         print("[!] 未能从页面登录态构造签名请求头，跳过桌面重启。", flush=True)
         return False
     print(f"[*] 正在重启云电脑桌面 (desktopId={desktop_id})...", flush=True)
-    status, text = in_page_api(
-        page,
-        DESKTOP_API_BASE + "/api/desktop/client/operate",
-        method="POST",
-        body=f"desktopId={desktop_id}&operationType=3",
-        content_type="application/x-www-form-urlencoded",
-        headers=hdrs,
-    )
-    snippet = (text or "")[:200]
-    if not (200 <= status < 300):
-        print(f"[-] 重启指令下发失败: status={status}, resp={snippet}", flush=True)
-        return False
-    print(f"[*] 重启指令已下发: status={status}, resp={snippet}", flush=True)
+
+    # 下发重启指令：业务错误（如 30010）按瞬时故障重试，最多 3 次
+    operate_body = f"desktopId={desktop_id}&operationType=3"
+    success = False
+    last_code = ""
+    for attempt in range(1, 4):
+        status, text = in_page_api(
+            page,
+            DESKTOP_API_BASE + "/api/desktop/client/operate",
+            method="POST",
+            body=operate_body,
+            content_type="application/x-www-form-urlencoded",
+            headers=hdrs,
+        )
+        snippet = (text or "")[:200]
+        print(
+            f"[*] 重启指令第 {attempt}/3 次下发: status={status}, resp={snippet}",
+            flush=True,
+        )
+        if not (200 <= status < 300):
+            # 网关/签名类失败，重试无意义，直接返回
+            print(f"[-] 重启指令下发失败（HTTP {status}），不再重试。", flush=True)
+            return False
+        # HTTP 200：区分业务成功与业务失败
+        try:
+            data = json.loads(text) if text else {}
+        except Exception:
+            data = {}
+        code = data.get("code") if isinstance(data, dict) else None
+        has_code = "code" in data if isinstance(data, dict) else False
+        # code 为空/缺失视为成功；兼容 0/200/"0"/"200"
+        business_ok = (not has_code) or (code in (0, 200, "0", "200"))
+        if business_ok:
+            success = True
+            break
+        last_code = str(code)
+        print(
+            f"[-] 平台返回业务错误 code={last_code}, 30 秒后重试",
+            flush=True,
+        )
+        if attempt < 3:
+            time.sleep(30)
+    if not success:
+        print(
+            f"[!] 重启指令多次下发均被平台拒绝（最后 code={last_code}），"
+            f"将继续尝试重进桌面。",
+            flush=True,
+        )
 
     # 轮询桌面状态仅供观察：云电脑重启通常 1-5 分钟，状态接口读不到不算失败
     last_state = ""
@@ -879,37 +919,6 @@ def wait_for_points_with_points(
         time.sleep(step)
         remaining -= step
     print("\r[*] 挂机等待完成。")
-
-
-def fetch_current_progress(url: str, headers: Dict[str, str]) -> int:
-    """
-    向指定的 URL 发起 GET 请求，并直接解析提取 currentProgress 的值。
-    Args:
-        url (str): 接口的目标 URL。
-        headers (Dict[str, str]): 请求头字典。
-
-    Returns:
-        Optional[Any]: 成功提取到进度值则返回该值；如果请求失败或数据不存在则返回 None。
-    """
-    try:
-        headers = clean_headers(headers)
-
-        response = requests.get(url, headers=headers, timeout=10)
-
-        response.raise_for_status()
-
-        data = response.json()
-        task_list = data.get("data")
-
-        for task in task_list:
-            if task.get("taskDefName") == "使用1小时":
-                return task.get("currentProgress")
-        return 0
-
-    except (requests.RequestException, ValueError) as error:
-        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{current_time}] 获取或解析数据失败: {error}")
-        return 0
 
 
 def get_redeem_config_path(running_in_docker: bool) -> str:
