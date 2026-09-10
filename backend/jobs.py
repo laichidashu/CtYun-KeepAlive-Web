@@ -312,7 +312,10 @@ class JobService:
             # 之后所有同类任务排队 3 小时也拿不到锁（历史事故根因：
             # 15:09 一个 ai_chat 任务直接拿到锁却未释放，导致当天全部
             # pc_hang 任务 18:48 起持续「被互斥跳过」，挂机任务全废）。
-            acquired = mutex.BrowserMutex.try_acquire(job.type, job.name)
+            # run_token：本次运行的锁持有者令牌，finally 只释放自己持有的锁，
+            # 避免「被停止强制释放后锁已被他人拿走，自己的 finally 又误放他人锁」。
+            run_token = uuid.uuid4().hex
+            acquired = mutex.BrowserMutex.try_acquire(job.type, job.name, run_token)
             if not acquired:
                 with cls._lock:
                     job.queued = True  # 前端「排队等待」横幅标记
@@ -328,7 +331,7 @@ class JobService:
                             still_enabled = job.enabled and job.running
                         if not still_enabled:
                             break
-                        if mutex.BrowserMutex.try_acquire(job.type, job.name):
+                        if mutex.BrowserMutex.try_acquire(job.type, job.name, run_token):
                             acquired = True
                             logs.info("任务", "[%s] 排队 %d 秒后获得浏览器使用权，开始执行"
                                       % (job.name, waited))
@@ -402,7 +405,9 @@ class JobService:
         finally:
             if acquired:
                 import mutex
-                mutex.BrowserMutex.release(job.type)
+                # 只释放本次运行持有的锁（令牌匹配）；若已被 stop 强制释放且
+                # 锁被别的任务拿走，这里会被拒绝，不会误放他人锁。
+                mutex.BrowserMutex.release(job.type, token=run_token)
             # 复位前端横幅所需的瞬时标记（execute 任何路径退出都会经过这里）
             try:
                 with cls._lock:
@@ -634,7 +639,7 @@ class JobService:
                 elif (now - since).total_seconds() >= ORPHAN_GRACE_SECONDS:
                     logs.warn("任务", "确认浏览器互斥锁（模式 %s，键 %s）已泄漏，强制释放"
                               % (mode, key or "-"))
-                    mutex.BrowserMutex.release(key)
+                    mutex.BrowserMutex.release(key, force=True)
                     cls._orphan_since.pop(key, None)
                     changed = True
 
