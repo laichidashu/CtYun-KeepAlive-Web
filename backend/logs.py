@@ -5,6 +5,7 @@
 - 每个订阅者一条独立有界队列（满则丢最旧），慢消费者不拖垮生产者
 - 日志行格式：[HH:mm:ss.ff] [来源] 消息
 """
+import atexit
 import os
 import queue
 import sys
@@ -182,6 +183,25 @@ def write_line(message, level=LEVEL_INFO, source="系统"):
     _write_line(src, message)
     Log.publish(level, src, message)
     _write_file_line(level, src, message)
+
+
+def close_file_handle():
+    """进程退出时显式关闭日志文件句柄（atexit 注册）。
+
+    只在进程收尾时调用一次：句柄置 None 后若仍有线程写入，
+    _write_file_line 会按「跨天重开」的既有逻辑重新打开，不影响其正确性。
+    """
+    global _FILE_HANDLE
+    with _FILE_GATE:
+        try:
+            if _FILE_HANDLE:
+                _FILE_HANDLE.close()
+        except Exception:
+            pass  # 句柄可能已由跨天重开逻辑关闭
+        _FILE_HANDLE = None
+
+
+atexit.register(close_file_handle)
 
 
 def info(source: str, message: str):
