@@ -1223,3 +1223,58 @@ input:checked + .slider:before {
         font-size: 13px;
     }
 }
+
+/* =========================== 当前浏览器任务横幅 =========================== */
+/* 复用页面既有 .glass-card 卡片底、.status-dot 三色圆点（绿=运行中脉冲、
+   黄=排队脉冲、灰=空闲），字体与圆角与相邻卡片保持一致。 */
+.banner-card {
+    padding: 16px 28px;
+}
+
+.banner-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    flex-wrap: wrap;
+}
+
+.banner-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-primary);
+}
+
+.banner-idle-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.banner-job {
+    padding-left: 8px;
+}
+
+.banner-job-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.banner-account {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+}
+
+.banner-elapsed {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--status-green);
+}
+
+.banner-queued-text {
+    color: var(--status-yellow);
+    font-size: 13px;
+}
+
