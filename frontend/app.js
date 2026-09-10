@@ -61,6 +61,7 @@
         pollTimer: null,
         pollSeconds: DEFAULT_POLL_SECONDS,
         expiryTimer: null,
+        bannerTimer: null,      // 「当前浏览器任务」横幅的 1 秒时长 ticker（全局唯一，防泄漏）
 
         logStream: null,
         logPaused: false,
@@ -675,6 +676,8 @@
         clearNode($('ov-schedule'));
         clearNode($('accounts-list'));
         clearNode($('jobs-list'));
+        clearNode($('browser-task-banner'));
+        stopBannerTicker();
         clearNode($('jobs-history-body'));
         clearNode($('tasks-summary-body'));
         clearNode($('redeem-plan'));
@@ -1103,6 +1106,7 @@
         state.accounts = Array.isArray(results[2]) ? results[2] : [];
         state.tasksSummary = results[3] || null;
         renderJobs();
+        renderBrowserTaskBanner();
         renderHistory();
         renderTasksSummary();
         maybeAutoFix();
@@ -1595,6 +1599,163 @@
             tr.appendChild(el('td', 'wrap', r.summary || '—'));
             tbody.appendChild(tr);
         });
+    }
+
+    /* ======================================================================
+       七.5 当前浏览器任务横幅（运行中 / 排队等待 / 空闲，1 秒实时刷新）
+       ====================================================================== */
+
+    /** 任务类型的横幅徽章文案。 */
+    function bannerTypeLabel(type) {
+        return type === 'pc_hang' ? '💻 云电脑挂机' : '🤖 AI对话';
+    }
+
+    /**
+     * 解析服务端本地时间戳 "YYYY-MM-DD HH:MM:SS"（服务端与本机同区，按本地时间）。
+     * @param {string} text 原始时间字符串
+     * @returns {Date|null} 非法输入返回 null
+     */
+    function parseLocalStamp(text) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(String(text || ''));
+        if (!m) {
+            return null;
+        }
+        var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+            Number(m[4]), Number(m[5]), Number(m[6]));
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    /** 已运行时长：< 1 小时显示 "MM:SS"，更长沿用 fmtDuration（HH:MM:SS / N天…）。 */
+    function bannerElapsedText(startMs) {
+        var sec = Math.floor((Date.now() - startMs) / 1000);
+        if (sec < 0) {
+            return '—'; // 起始时间在未来属数据异常，不显示负时长
+        }
+        if (sec < 3600) {
+            return pad2(Math.floor(sec / 60)) + ':' + pad2(sec % 60);
+        }
+        return fmtDuration(sec);
+    }
+
+    /**
+     * 横幅专用 1 秒 ticker：只更新 .banner-elapsed 节点的时长文本，
+     * 全局仅一个实例（复用 state.bannerTimer），无时长节点时自动停止，防泄漏。
+     */
+    function startBannerTicker() {
+        if (state.bannerTimer) {
+            return;
+        }
+        state.bannerTimer = setInterval(function () {
+            var box = document.getElementById('browser-task-banner');
+            var spans = box ? box.querySelectorAll('.banner-elapsed[data-start]') : [];
+            if (!spans || spans.length === 0) {
+                stopBannerTicker();
+                return;
+            }
+            for (var i = 0; i < spans.length; i++) {
+                var start = Number(spans[i].getAttribute('data-start'));
+                if (start > 0) {
+                    spans[i].textContent = '已运行 ' + bannerElapsedText(start);
+                }
+            }
+        }, 1000);
+    }
+
+    function stopBannerTicker() {
+        if (state.bannerTimer) {
+            clearInterval(state.bannerTimer);
+            state.bannerTimer = null;
+        }
+    }
+
+    /** 浏览器互斥范围键：Global 全局一把锁；PerType 按类型各一把（与后端 mutex.py 对应）。 */
+    function bannerScopeKey(job) {
+        var mode = (state.settings && state.settings.browserMutexMode) || 'Global';
+        return mode === 'PerType' ? 'type:' + (job.type || '') : 'global';
+    }
+
+    /** 构造一行运行中的任务：绿点 + 名称 + 类型徽章 + 账号 + 实时时长。 */
+    function buildBannerJobLine(job) {
+        var line = el('div', 'banner-line banner-job');
+        line.appendChild(el('span', 'status-dot active'));
+        line.appendChild(el('span', 'banner-job-name', job.name || '未命名任务'));
+        line.appendChild(badge(bannerTypeLabel(job.type), job.type === 'pc_hang' ? 'info' : 'muted'));
+        line.appendChild(el('span', 'banner-account', maskUser(job.accountUser)));
+
+        var elapsed = el('span', 'banner-elapsed', '已运行 —');
+        var start = parseLocalStamp(job.runStartedAt) || parseLocalStamp(job.lastRunAt);
+        if (start) {
+            elapsed.setAttribute('data-start', String(start.getTime()));
+            elapsed.textContent = '已运行 ' + bannerElapsedText(start.getTime());
+        }
+        line.appendChild(elapsed);
+        return line;
+    }
+
+    /** 渲染「当前浏览器任务」横幅（在 loadJobs 取回 /api/jobs 后调用）。 */
+    function renderBrowserTaskBanner() {
+        var box = $('browser-task-banner');
+        if (!box) {
+            return;
+        }
+        clearNode(box);
+
+        var jobs = state.jobs || [];
+        var running = jobs.filter(function (j) { return !!j.running; });
+
+        // --- 空闲态 ---
+        if (running.length === 0) {
+            var idle = el('div', 'banner-line');
+            idle.appendChild(el('span', 'status-dot inactive'));
+            idle.appendChild(el('span', 'banner-title', '当前浏览器任务'));
+            idle.appendChild(el('span', 'banner-idle-text', '空闲 — 当前没有浏览器任务在运行'));
+            box.appendChild(idle);
+            stopBannerTicker();
+            return;
+        }
+
+        // --- 运行中列表 ---
+        var head = el('div', 'banner-line');
+        head.appendChild(el('span', 'status-dot active'));
+        head.appendChild(el('span', 'banner-title', '当前浏览器任务'));
+        box.appendChild(head);
+
+        // 后端明确标记 queued 的任务不再出现在运行行（等后端合入 queued 字段后生效）
+        running.filter(function (j) { return !j.queued; }).forEach(function (job) {
+            box.appendChild(buildBannerJobLine(job));
+        });
+
+        // --- 排队等待 ---
+        // 优先使用后端明确的 queued 标记；后端未标注时按互斥范围推断：
+        // 同一范围内运行数 > 1（Global 全局一把锁 / PerType 按类型一把锁），
+        // 除列表首个外均视为在排队（持锁者以后端日志为准，推断仅供参考）。
+        var queuedJobs = running.filter(function (j) { return !!j.queued; });
+        if (queuedJobs.length === 0) {
+            var scopes = {};
+            running.forEach(function (j) {
+                var key = bannerScopeKey(j);
+                if (!scopes[key]) {
+                    scopes[key] = [];
+                }
+                scopes[key].push(j);
+            });
+            Object.keys(scopes).forEach(function (key) {
+                scopes[key].slice(1).forEach(function (j) {
+                    queuedJobs.push(j);
+                });
+            });
+        }
+        if (queuedJobs.length > 0) {
+            var qline = el('div', 'banner-line banner-queued');
+            qline.appendChild(el('span', 'status-dot pending'));
+            qline.appendChild(el('span', 'banner-queued-text',
+                '排队等待：' + queuedJobs.map(function (j) {
+                    return (j.name || '未命名任务') + '（' + bannerTypeLabel(j.type) + '）';
+                }).join('、') + ' —— 等待浏览器互斥锁释放'));
+            box.appendChild(qline);
+        }
+
+        startBannerTicker();
     }
 
     /** 填充账号下拉（任务关联账号 / 兑换云电脑选择器共用数据源）。 */
