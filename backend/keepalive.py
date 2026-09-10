@@ -112,7 +112,10 @@ def _probe_real_status(session, desktop):
     """查询该云电脑的平台真实状态（如「运行中」「已关机」）；查询失败返回 None。"""
     try:
         dlist = session.api.get_client_list()
-    except Exception:
+    except Exception as ex:
+        # 静默失败会让「核对真实状态」变成空话，排查时无从下手——至少留痕
+        logs.warn(session.display_name, "[%s] 真实状态探测失败：%s"
+                  % (desktop.get("desktopCode", ""), _short_err(ex)))
         return None
     if not dlist:
         return None
@@ -422,8 +425,11 @@ class KeepAliveEngine:
 
                 logs.ok(label, "[%s] 连接已就绪，保持 %d 秒..." % (code, keep_alive_seconds))
                 _update_desktop_status(key, code, "保活中")
-                consecutive_failures = 0
-                info_refreshes = 0
+                # ★ 此处不再清零 consecutive_failures——桌面会话僵死时平台会
+                #   「接受 WS 握手后立即踢掉」，若握手成功即清零计数，则连续失败
+                #   计数永远为 1：退避恒 5 秒、自愈刷新/会话重建永不触发，
+                #   形成每 6 秒一次的重连风暴（实测单日 517 次被踢）。
+                #   只有完整撑过一个保活周期（WSTimeout 正常到期）才视为健康并清零。
 
                 try:
                     KeepAliveEngine._receive_loop(session, ws, desktop, cycle_end)
@@ -432,6 +438,9 @@ class KeepAliveEngine:
                         break
                 except WSTimeout:
                     logs.info(label, "[%s] 周期时间到，准备重连..." % code)
+                    consecutive_failures = 0   # 完整撑过保活周期 = 健康
+                    info_refreshes = 0
+                    poweron_waits = 0          # 健康周期后重新获得开机自愈额度
                     _touch_metrics(key, lambda m: m.__setitem__(
                         "reconnectCount", m["reconnectCount"] + 1))
             except Exception as ex:
