@@ -442,22 +442,25 @@ class Handler(BaseHTTPRequestHandler):
             out.append(dto)
 
         # 等待验证码的待绑定账号（不含已配置的）
-        for pending_user in list(G.pending_logins.keys()):
-            if any(a.get("user") == pending_user for a in out):
-                continue
-            pending_cfg = G.pending_configs.get(pending_user)
-            out.append({
-                "name": (pending_cfg.name if pending_cfg else "") or pending_user,
-                "user": pending_user,
-                "key": keepalive.normalize_key(pending_user),
-                "isRunning": False,
-                "statusText": "等待验证码",
-                "desktops": [],
-                "metrics": {k: (0 if k != "lastError" else "") for k in [
-                    "startedAt", "uptimeSeconds", "heartbeatSuccess", "heartbeatFailed",
-                    "consecutiveFailures", "reconnectCount", "lastHeartbeatAt", "retryCount",
-                    "nextRetryAt", "nextRestartAt", "lastError"]},
-            })
+        # G._gate（RLock）保护 pending 字典读取：与写入端（添加/验证接口）互斥，
+        # 锁内仅做字典读与列表填充，无耗时操作
+        with G._gate:
+            for pending_user in list(G.pending_logins.keys()):
+                if any(a.get("user") == pending_user for a in out):
+                    continue
+                pending_cfg = G.pending_configs.get(pending_user)
+                out.append({
+                    "name": (pending_cfg.name if pending_cfg else "") or pending_user,
+                    "user": pending_user,
+                    "key": keepalive.normalize_key(pending_user),
+                    "isRunning": False,
+                    "statusText": "等待验证码",
+                    "desktops": [],
+                    "metrics": {k: (0 if k != "lastError" else "") for k in [
+                        "startedAt", "uptimeSeconds", "heartbeatSuccess", "heartbeatFailed",
+                        "consecutiveFailures", "reconnectCount", "lastHeartbeatAt", "retryCount",
+                        "nextRetryAt", "nextRestartAt", "lastError"]},
+                })
         self._json(out)
 
     def _ep_accounts_add(self):
@@ -874,10 +877,12 @@ class Handler(BaseHTTPRequestHandler):
         if job is None:
             return self._ok_web(success=False, msg="任务不存在")
         # 真正终止脚本进程并释放浏览器互斥，避免停止后其它任务被永久挡住
+        # 进程登记键为「账号:任务类型」组合键，与 scriptrunner.run 侧保持一致
         killed = False
         try:
             import scriptrunner
-            killed = scriptrunner.kill_running(job.account_user or "")
+            killed = scriptrunner.kill_running(
+                scriptrunner.make_run_key(job.account_user or "", job.type))
         except Exception:
             killed = False
         try:
