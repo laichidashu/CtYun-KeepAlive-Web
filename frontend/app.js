@@ -30,6 +30,17 @@
     /** 任务类型显示名。 */
     var JOB_TYPE_LABEL = { ai_chat: 'AI 对话', pc_hang: '云电脑挂机' };
 
+    /** 平台官方任务名 → 统一展示名（后端 redeem.display_task_name 的前端兜底）。 */
+    var PLATFORM_TASK_LABEL = { '使用1小时': '云电脑挂机' };
+    function platformTaskLabel(name) {
+        var n = String(name == null ? '' : name).trim();
+        if (!n) { return '未命名'; }
+        for (var k in PLATFORM_TASK_LABEL) {
+            if (n.indexOf(k) !== -1) { return PLATFORM_TASK_LABEL[k]; }
+        }
+        return n;
+    }
+
     /** 云电脑状态中视为"在线"的关键字。 */
     var DESKTOP_ONLINE_KEYWORDS = ['保活', '运行', '就绪', '连接', '在线'];
 
@@ -1386,7 +1397,7 @@
                     pst.tasks.forEach(function (pt) {
                         var line = el('div', '', '');
                         line.style.cssText = 'display:flex;align-items:center;gap:10px;padding:2px 0;';
-                        var nm = el('span', '', pt.name || '未命名');
+                        var nm = el('span', '', platformTaskLabel(pt.name));
                         nm.style.cssText = 'min-width:180px;';
                         line.appendChild(nm);
                         var prog = (pt.progress != null ? pt.progress : '?') +
