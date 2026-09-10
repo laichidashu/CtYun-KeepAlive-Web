@@ -288,13 +288,15 @@ class JobService:
                     logs.warn("任务", "[%s] 平台任务预检登录失败，照常执行脚本" % job.name)
                 else:
                     done, desc = redeem.probe_task_done(api, keyword)
-                    logs.info("任务", "[%s] 平台任务预检（关键词「%s」）：%s" % (job.name, keyword, desc))
+                    # 匹配用平台原名 keyword，展示用统一别名（「使用1小时」→「云电脑挂机」）
+                    shown = redeem.display_task_name(keyword)
+                    logs.info("任务", "[%s] 平台任务预检（关键词「%s」）：%s" % (job.name, shown, desc))
                     if done is True:
                         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         record.success = True
                         record.ended_at = int(time.time())
                         record.duration_seconds = max(0, record.ended_at - record.started_at)
-                        record.summary = "平台任务已完成，无需执行（%s）｜%s" % (keyword, desc)
+                        record.summary = "平台任务已完成，无需执行（%s）｜%s" % (shown, desc)
                         job.last_run_at = now_str
                         job.last_result = "已完成，跳过"
                         with cls._lock:
