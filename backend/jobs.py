@@ -21,6 +21,8 @@ TICK_SECONDS = 20
 HISTORY_LIMIT = 50
 # 定时触发的任务在浏览器被占用时的排队参数（避免多个任务同时到点互相顶掉）
 MUTEX_QUEUE_WAIT_SECONDS = 3 * 3600   # 最多排队 3 小时
+RANDOM_JITTER_MINUTES = 90            # random_daily：cron 时刻后的随机抖动窗口（分钟）。
+                                      # 需小于错峰间隔（挂机任务间隔 100 分钟），否则窗口重叠仍可能撞车。
 MUTEX_QUEUE_POLL_SECONDS = 20         # 每 20 秒重试一次
 
 JOB_TYPE_AI_CHAT = "ai_chat"
@@ -185,33 +187,28 @@ class JobService:
 
     @classmethod
     def _random_next_daily(cls, job: ScheduledJob):
-        """当天随机时间调度：每天在 00:00–23:59 内均匀随机选一个时刻运行一次。
+        """随机调度（random_daily）：在每个 cron 触发点之后 0~RANDOM_JITTER_MINUTES
+        分钟的窗口内随机运行一次。
 
-        - 今天已跑过（last_run_at 为今天）→ 排明天；
-        - 今天的随机点若已过当前时刻，则在「剩余时间窗」内随机，保证今天仍会跑；
-        - 随机结果至少晚于当前 2 分钟，防止刚安排就触发。
+        旧实现是全日 00:00–23:59 均匀随机——多个任务各自全日随机，
+        80 分钟的挂机任务极易两两撞车 → 排队 → 3 小时上限 → 频繁「超时」，
+        这正是「定时任务从早跑到晚都跑不完」的根源。
+        新实现以 cron 排布为基准 + 窗口内抖动：既保留防风控的随机性，
+        又让错峰排布真正可控。抖动值按（任务 Id + 触发点）确定性生成，
+        避免重算 next_run_at 时来回跳动。
         """
+        cron = cronx.CronExpression.try_parse(job.cron)
         now = datetime.now()
-        day = now.date()
-        last = None
-        if job.last_run_at:
-            try:
-                last = datetime.strptime(job.last_run_at, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                last = None
-        if last is not None and last.date() >= day:
-            day = last.date() + timedelta(days=1)
-        for _ in range(10):
-            day_start = datetime.combine(day, datetime.min.time())
-            lo = 0
-            if day == now.date():
-                # 今天：在剩余时间窗内随机（至少晚 2 分钟）
-                lo = min(86399, int((now - day_start).total_seconds()) + 120)
-            if lo >= 86399:
-                day = day + timedelta(days=1)
-                continue
-            return day_start + timedelta(seconds=random.randint(lo, 86359))
-        return None
+        base = cron.get_next_occurrence(now, now + timedelta(days=366))
+        if not base:
+            return None
+        rng = random.Random("%s|%s" % (job.id, base.strftime("%Y-%m-%dT%H:%M")))
+        delay = rng.uniform(0, RANDOM_JITTER_MINUTES * 60)
+        nxt = base + timedelta(seconds=delay)
+        if nxt <= now + timedelta(seconds=110):
+            # 抖动后落在眼前：至少推后 2 分钟，防止刚排定立即触发
+            nxt = now + timedelta(minutes=2)
+        return nxt
 
     @classmethod
     def find(cls, job_id: str):
