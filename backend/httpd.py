@@ -887,7 +887,8 @@ class Handler(BaseHTTPRequestHandler):
             killed = False
         try:
             import mutex
-            mutex.BrowserMutex.release(job.type)
+            # force=True：用户主动停止，无论锁当前登记持有者是谁都强制释放
+            mutex.BrowserMutex.release(job.type, force=True)
         except Exception:
             pass
         job.running = False
