@@ -24,6 +24,8 @@ MUTEX_QUEUE_WAIT_SECONDS = 3 * 3600   # 最多排队 3 小时
 RANDOM_JITTER_MINUTES = 90            # random_daily：cron 时刻后的随机抖动窗口（分钟）。
                                       # 需小于错峰间隔（挂机任务间隔 100 分钟），否则窗口重叠仍可能撞车。
 MUTEX_QUEUE_POLL_SECONDS = 20         # 每 20 秒重试一次
+ORPHAN_GRACE_SECONDS = 300            # 「锁被持有但无运行中任务」持续多久才判定为泄漏并回收
+                                      # （规避「任务刚结束、finally 尚未释放」的毫秒级窗口）
 
 JOB_TYPE_AI_CHAT = "ai_chat"
 JOB_TYPE_PC_HANG = "pc_hang"
@@ -145,6 +147,7 @@ class JobService:
     _jobs = []            # List[ScheduledJob]
     _lock = threading.RLock()
     is_running = False    # 调度器整体运行状态（由 CronScheduler 维护）
+    _orphan_since = {}    # 互斥锁键 → 首次发现「被持有但无运行中任务」的时间戳（识别泄漏锁）
 
     @classmethod
     def initialize(cls):
@@ -304,7 +307,13 @@ class JobService:
 
             # 2. 浏览器互斥（定时触发的任务排队等待，避免同时到点全部被跳过）
             import mutex
-            if not mutex.BrowserMutex.try_acquire(job.type, job.name):
+            # 关键：无论「首次直接获取成功」还是「排队后获取成功」，都必须让
+            # acquired=True，否则 finally 不会调用 release → 互斥锁永久泄漏，
+            # 之后所有同类任务排队 3 小时也拿不到锁（历史事故根因：
+            # 15:09 一个 ai_chat 任务直接拿到锁却未释放，导致当天全部
+            # pc_hang 任务 18:48 起持续「被互斥跳过」，挂机任务全废）。
+            acquired = mutex.BrowserMutex.try_acquire(job.type, job.name)
+            if not acquired:
                 with cls._lock:
                     job.queued = True  # 前端「排队等待」横幅标记
                 if source == "cron":
@@ -557,6 +566,84 @@ class JobService:
                 return j
         return None
 
+    # 单个任务从触发到结束的理论最长秒数：排队上限 + 生效超时 + 收尾余量。
+    @classmethod
+    def _max_run_seconds(cls, job: ScheduledJob) -> int:
+        eff = job.timeout_minutes
+        if job.type == JOB_TYPE_PC_HANG:
+            needed = job.hang_seconds // 60 + 10
+            if eff < needed:
+                eff = needed
+        return MUTEX_QUEUE_WAIT_SECONDS + eff * 60 + 600
+
+    @classmethod
+    def reap_stale_state(cls):
+        """自愈：清理幽灵运行态，并回收泄漏的浏览器互斥锁。
+
+        本方法由调度循环每 tick 调用，覆盖两类「标记/锁未复位」故障：
+        1) 幽灵任务：execute 线程被强杀（进程被 kill / 异常吞掉 finally）导致
+           job.running 卡在 True，调度器据此永远跳过该任务。
+        2) 泄漏锁：任务获取互斥锁后走了未释放的路径，后续同类任务排队 3 小时
+           也拿不到锁，永远「被互斥跳过」。
+        泄漏判定用不变量「锁被持有 ⇒ 必有 running 任务」；为规避「任务刚结束、
+        finally 尚未释放」的毫秒级窗口，要求孤儿状态持续 ORPHAN_GRACE_SECONDS 才回收。
+        """
+        changed = False
+        now = datetime.now()
+        with cls._lock:
+            # --- 1. 幽灵运行态复位 ---
+            for job in cls._jobs:
+                if not job.running or not job.run_started_at:
+                    continue
+                try:
+                    started = datetime.strptime(job.run_started_at, "%Y-%m-%d %H:%M:%S")
+                    age = (now - started).total_seconds()
+                except ValueError:
+                    age = 0
+                if age > cls._max_run_seconds(job):
+                    logs.warn("任务", "[%s] 运行标记已持续 %d 分钟（超过理论上限），"
+                              "判定为幽灵任务并复位运行状态" % (job.name, int(age // 60)))
+                    job.running = False
+                    job.queued = False
+                    job.run_started_at = ""
+                    changed = True
+
+            # --- 2. 孤儿互斥锁回收 ---
+            import mutex
+            mode = store.G.config.browser_mutex_mode if store.G.config else "Global"
+            if mode == "PerType":
+                keys = (JOB_TYPE_AI_CHAT, JOB_TYPE_PC_HANG)
+
+                def _holder_busy(key):
+                    return any(j.running and (j.type or "") == key for j in cls._jobs)
+            else:
+                keys = ("",)
+
+                def _holder_busy(key):
+                    return any(j.running for j in cls._jobs)
+
+            for key in keys:
+                if not mutex.BrowserMutex.is_held(key) or _holder_busy(key):
+                    cls._orphan_since.pop(key, None)
+                    continue
+                since = cls._orphan_since.get(key)
+                if since is None:
+                    cls._orphan_since[key] = now
+                    logs.warn("任务", "浏览器互斥锁（模式 %s，键 %s）被持有但无运行中任务，"
+                              "观察 %d 秒后自动回收" % (mode, key or "-", ORPHAN_GRACE_SECONDS))
+                elif (now - since).total_seconds() >= ORPHAN_GRACE_SECONDS:
+                    logs.warn("任务", "确认浏览器互斥锁（模式 %s，键 %s）已泄漏，强制释放"
+                              % (mode, key or "-"))
+                    mutex.BrowserMutex.release(key)
+                    cls._orphan_since.pop(key, None)
+                    changed = True
+
+            if changed:
+                try:
+                    cls._persist_locked()
+                except Exception:
+                    pass
+
     @classmethod
     def _persist_locked(cls):
         ConfigStore.save(Paths.jobs_path, lambda: [j.to_dict() for j in cls._jobs])
@@ -582,6 +669,9 @@ class CronScheduler:
         try:
             while not stop_event.is_set() and not G.global_stop.is_set():
                 try:
+                    # 每 tick 先自愈：复位幽灵运行态、回收泄漏的互斥锁，
+                    # 避免「任务永远排队 / 被互斥跳过」的静默失效。
+                    JobService.reap_stale_state()
                     now = datetime.now()
                     for job_dict in JobService.snapshot():
                         if not job_dict["enabled"] or job_dict["running"]:
