@@ -315,18 +315,36 @@ def perform_update(timeout: float = 120) -> dict:
             "message": rem["message"], "error": ""}
 
 
+# 看门狗（watchdog.py）拉起子进程时注入的环境变量：子进程据此判断「重启归看门狗管」
+WATCHDOG_ENV_VAR = "CTYUN_WATCHDOG"
+
+
 def restart_service(delay: float = 1.0):
-    """重启服务：另起一个守护进程，等当前进程退出后重新拉起 server.py。"""
+    """重启服务：另起一个守护进程，等当前进程退出后重新拉起 server.py。
+
+    特例：本进程若由看门狗拉起（环境变量 CTYUN_WATCHDOG=1），**不再自己
+    spawn 任何进程** —— 否则会脱离看门狗监管，且看门狗发现子进程退出后
+    自己再拉一个，新进程读到刚被重写的 pidfile 会判「已有实例运行中」直退，
+    几次之后触发崩溃循环保护、看门狗永久放弃。正确做法是只记日志后返回，
+    由看门狗统一拉起（退出码与运行时长也由看门狗记录，留痕不丢）。
+    """
+    if os.environ.get(WATCHDOG_ENV_VAR, "") == "1":
+        logs.info("更新", "已由看门狗接管重启：本进程即将退出，由看门狗重新拉起服务。")
+        return
+
     root = base_dir()
     server = os.path.join(root, "backend", "server.py")
     py = sys.executable or "python"
+    # 判活复用 watchdog.process_alive（ctypes 版）：os.kill(pid, 0) 在 Windows 上
+    # 语义不可靠（对已退出但仍被持有句柄的 PID 不报错），项目内已明确禁用。
+    backend_dir = os.path.join(root, "backend")
     helper = (
         "import os,subprocess,sys,time\n"
+        "sys.path.insert(0, r'%s')\n"
+        "from watchdog import process_alive\n"
         "pid=%d\n"
         "for _ in range(240):\n"
-        "    try:\n"
-        "        os.kill(pid,0)\n"
-        "    except OSError:\n"
+        "    if not process_alive(pid):\n"
         "        break\n"
         "    time.sleep(0.5)\n"
         "time.sleep(0.5)\n"
@@ -334,7 +352,7 @@ def restart_service(delay: float = 1.0):
         "if os.name=='nt':\n"
         "    cf=0x00000008|0x00000200\n"
         "subprocess.Popen([r'%s', r'%s'], cwd=r'%s', creationflags=cf)\n"
-        % (os.getpid(), py, server, root))
+        % (backend_dir, os.getpid(), py, server, root))
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_PROCESS_GROUP
