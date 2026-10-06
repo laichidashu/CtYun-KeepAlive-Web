@@ -311,6 +311,26 @@ def display_task_name(raw) -> str:
     return name
 
 
+def _overview_of(raw_tasks):
+    """把平台**原始**任务列表转换成 Web 面板使用的形状。
+
+    单独抽出来是为了让「定时任务预检」也能复用：预检本来就要拉一次列表，
+    转换后顺手登记给「今日是否达标」判定用，不必再发第二次网络请求。
+    """
+    out = []
+    for t in (raw_tasks or []):
+        if not isinstance(t, dict):
+            continue
+        out.append({
+            "name": display_task_name(t.get("taskDefName")),
+            "progress": _to_int(t.get("currentProgress")),
+            "limit": _task_target(t),
+            "done": _task_done_flag(t),
+            "reward": _to_int(t.get("integral") or t.get("reward") or t.get("points")),
+        })
+    return out
+
+
 def task_overview(api):
     """拉取平台全部积分任务的完成情况（供 Web 面板展示）。
 
@@ -321,32 +341,25 @@ def task_overview(api):
     tasks = fetch_task_list(api)
     if tasks is None:
         return None, "平台任务列表拉取失败（登录态可能失效或接口异常）"
-    out = []
-    for t in tasks:
-        if not isinstance(t, dict):
-            continue
-        out.append({
-            "name": display_task_name(t.get("taskDefName")),
-            "progress": _to_int(t.get("currentProgress")),
-            "limit": _task_target(t),
-            "done": _task_done_flag(t),
-            "reward": _to_int(t.get("integral") or t.get("reward") or t.get("points")),
-        })
-    return out, None
+    return _overview_of(tasks), None
 
 
 def probe_task_done(api, keyword):
     """探测名称含 keyword 的平台任务是否已完成。
 
-    返回 (done, desc)：
+    返回 (done, desc, overview)：
       done=True   确认已完成；
       done=False  确认未完成；
       done=None   无法判断（调用方应 fail-open，照常执行任务）。
-    desc 为全部任务的进度摘要，便于日志留痕。
+      desc 为全部任务的进度摘要，便于日志留痕。
+      overview 为**面板同构**的任务列表（[{name, progress, limit, done, reward}, ...]），
+      供调用方登记进「今日是否达标」缓存——数据本来就已经拉回来了，
+      这样定时任务每跑一次就能刷新一次达标状态，不必再发第二次网络请求。
+      拉取失败时为 None。
     """
     tasks = fetch_task_list(api)
     if tasks is None:
-        return None, "平台任务列表拉取失败"
+        return None, "平台任务列表拉取失败", None
     lines = []
     target = None
     for t in tasks:
@@ -359,9 +372,10 @@ def probe_task_done(api, keyword):
         if keyword and keyword in raw_name:
             target = t
     desc = "平台任务[" + "; ".join(lines) + "]" if lines else "平台任务列表为空"
+    overview = _overview_of(tasks)
     if target is None:
-        return None, desc + "（未找到含「%s」的任务，无法判断）" % display_task_name(keyword)
-    return _task_done_flag(target), desc
+        return None, desc + "（未找到含「%s」的任务，无法判断）" % display_task_name(keyword), overview
+    return _task_done_flag(target), desc, overview
 
 
 def execute(cfg: RedeemConfig, manual: bool = False):
