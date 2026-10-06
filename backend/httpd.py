@@ -73,17 +73,53 @@ def _platform_cache_path() -> str:
 
 
 def _save_platform_cache():
-    """把最近一次全量快照落盘（失败不影响主流程）。"""
+    """把「全量快照 + 单账号缓存」一并落盘（失败不影响主流程）。
+
+    两者写在同一文件里：
+      accounts / finishedAt —— 用户点「全量统计」时刷新（较慢，要逐个账号登录）；
+      users                —— 定时任务预检 / 单账号实时查询时刷新（更实时、零额外请求）。
+
+    两个要点：
+      1. 单账号缓存**只保留当天**的记录（平台任务按天重置，跨天会误判）；
+      2. 内存里没有全量快照时**不能把磁盘上已有的快照抹掉**——否则刚重启、
+         还没点过「全量统计」时保存会把旧快照清空。
+    """
     try:
+        path = _platform_cache_path()
+        disk = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                disk = json.load(f) or {}
+        except Exception:
+            disk = {}
+        if not isinstance(disk, dict):
+            disk = {}
+
         with _platform_all_lock:
             accounts = list(_platform_all_state.get("accounts") or [])
             finished = _platform_all_state.get("finishedAt") or 0
+        with _platform_user_lock:
+            mem_users = dict(_platform_user_cache)
+
+        # 全量快照：内存有就用内存的，否则沿用磁盘上的（绝不抹掉已有快照）
         if not accounts:
+            accounts = list(disk.get("accounts") or [])
+            finished = disk.get("finishedAt") or 0
+
+        # 单账号缓存：磁盘当天记录 + 内存当天记录（内存优先，因为更新更近）
+        users = {}
+        for u, item in (disk.get("users") or {}).items():
+            if isinstance(item, dict) and _same_local_day(item.get("at")):
+                users[str(u)] = item
+        for u, item in mem_users.items():
+            if isinstance(item, dict) and _same_local_day(item.get("at")):
+                users[str(u)] = item
+
+        if not accounts and not users:
             return
-        path = _platform_cache_path()
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"finishedAt": finished, "accounts": accounts},
+            json.dump({"finishedAt": finished, "accounts": accounts, "users": users},
                       f, ensure_ascii=False)
         os.replace(tmp, path)
     except Exception:
@@ -96,19 +132,45 @@ def _ensure_platform_cache_loaded():
     if _platform_cache_loaded:
         return
     _platform_cache_loaded = True
-    with _platform_all_lock:
-        if _platform_all_state.get("accounts"):
-            return
     try:
         with open(_platform_cache_path(), "r", encoding="utf-8") as f:
             snap = json.load(f)
-        accounts = snap.get("accounts") or []
-        if accounts:
-            with _platform_all_lock:
+    except Exception:
+        return
+    if not isinstance(snap, dict):
+        return
+
+    accounts = snap.get("accounts") or []
+    if accounts:
+        with _platform_all_lock:
+            if not _platform_all_state.get("accounts"):
                 _platform_all_state["accounts"] = accounts
                 _platform_all_state["finishedAt"] = snap.get("finishedAt") or 0
-    except Exception:
-        pass
+
+    # 单账号缓存：同样只信任当天的记录
+    users = snap.get("users") or {}
+    if users:
+        with _platform_user_lock:
+            for u, item in users.items():
+                if isinstance(item, dict) and _same_local_day(item.get("at")):
+                    if str(u) not in _platform_user_cache:
+                        _platform_user_cache[str(u)] = item
+
+
+def record_platform_tasks(user, tasks):
+    """登记某个账号最新的平台任务列表，供「今日是否达标」判定使用。
+
+    由定时任务预检（jobs.py）与单账号实时查询调用。数据已经在内存里了，
+    这里只是登记 + 落盘，**不会**再发一次网络请求。
+
+    这是「已完成（平台达标）」徽章的主要数据来源：全量快照只在用户手动点
+    「全量统计」时才刷新，靠它一个来源会导致徽章长期不显示。
+    """
+    if not user or not tasks:
+        return
+    with _platform_user_lock:
+        _platform_user_cache[str(user)] = {"tasks": list(tasks), "at": time.time()}
+    _save_platform_cache()
 
 
 def _same_local_day(ts) -> bool:
@@ -248,6 +310,18 @@ def _restart_after_update(delay: float = 1.5):
         logs.fail("系统", "自动重启失败，请手动重启服务：" + str(ex))
         return
     time.sleep(0.5)
+    # os._exit(0) 会跳过 atexit（退出无留痕、server.pid 残留），故在调用它之前
+    # 显式完成两件事：留痕 + 清理本进程的 pidfile。
+    # 顺序是安全的：接管方（看门狗，或 updater 拉起的 helper）都要等本进程真正
+    # 退出后才会拉起新实例，新实例的 pidfile 必然在本次删除之后写入；且删除走
+    # 归属比对（force=False），只删自己写的那一份，绝不会误删别人的。
+    logs.warn("系统", "更新后重启：本进程即将退出，重启由看门狗接管"
+              "（未使用看门狗时由 updater 拉起新进程）。")
+    try:
+        import server
+        server._remove_pidfile()
+    except Exception:
+        pass
     os._exit(0)
 
 
@@ -877,9 +951,8 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"success": False, "msg": err, "user": user, "tasks": []})
             done_n = sum(1 for t in tasks if t["done"] is True)
-            # 缓存本次结果：任务汇总据此显示「已完成（平台达标）」
-            with _platform_user_lock:
-                _platform_user_cache[acc.user] = {"tasks": tasks, "at": time.time()}
+            # 登记本次结果：任务汇总据此显示「已完成（平台达标）」，并落盘防重启丢失
+            record_platform_tasks(acc.user, tasks)
             logs.info("任务", "[平台任务] %s 实时查询：%d 项任务，已完成 %d"
                       % (acc.user, len(tasks), done_n))
             self._json({"success": True, "msg": "", "user": user, "tasks": tasks})
