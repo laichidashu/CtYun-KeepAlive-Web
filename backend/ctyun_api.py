@@ -37,6 +37,19 @@ def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+def _safe_url(url: str) -> str:
+    """日志用 URL：只保留 scheme+host+path，剥离 query/fragment。
+
+    query 里带 userInfo（手机号）、mobilePhone（手机号）、captchaCode（短信
+    验证码），且错误日志可能经飞书推到外部群，一律不落盘。
+    """
+    try:
+        parts = urllib.parse.urlsplit(url or "")
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except Exception:
+        return "***"
+
+
 class CtYunApi:
     def __init__(self, device_code: str):
         self.device_code = device_code or ""
@@ -90,7 +103,9 @@ class CtYunApi:
             obj = json.loads(raw.decode("utf-8", "replace"))
             return True, obj.get("code", -1), obj.get("msg", ""), obj.get("data")
         except Exception as ex:
-            logs.fail("系统", "请求 %s 失败：%s" % (url, ex))
+            # 只打 path，不打 query：query 里带 userInfo / mobilePhone / captchaCode
+            # （手机号与短信验证码），且日志可能经飞书推到外部群
+            logs.fail("系统", "请求 %s 失败：%s" % (_safe_url(url), ex))
             return False, -100, str(ex), None
 
     def _request_bytes(self, url: str) -> bytes:
