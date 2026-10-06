@@ -126,15 +126,16 @@ Write-Host '[SETUP] Checking for updates from GitHub ...'
 # ---------- 3.7 firewall (best effort) ----------
 
 Log '[3/4] firewall'
-$ruleName = 'CtYun-KeepAlive-8080'
+# 端口会因 8080 被占用而顺延（8081..8090），规则按整段放行，避免局域网访问被静默挡掉
+$ruleName = 'CtYun-KeepAlive-8080-8090'
 $existing = & netsh advfirewall firewall show rule name=$ruleName 2>$null
 if ($LASTEXITCODE -ne 0) {
-    & netsh advfirewall firewall add rule name=$ruleName dir=in action=allow protocol=TCP localport=8080 2>$null | Out-Null
+    & netsh advfirewall firewall add rule name=$ruleName dir=in action=allow protocol=TCP localport=8080-8090 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host '[SETUP] Firewall rule added: inbound TCP 8080 allowed.'
+        Write-Host '[SETUP] Firewall rule added: inbound TCP 8080-8090 allowed.'
         Log '[3/4] firewall rule added'
     } else {
-        Write-Host '[HINT] Firewall rule not added - allow TCP 8080 manually to access from other devices.'
+        Write-Host '[HINT] Firewall rule not added - allow TCP 8080-8090 manually to access from other devices.'
         Log '[3/4] firewall rule NOT added'
     }
 }
@@ -142,5 +143,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---------- 4. start server ----------
 
 Log '[4/4] starting server'
-& $py (Join-Path $root 'backend\server.py')
+# 走 watchdog.py：服务异常退出会自动重启（5 秒后），崩溃循环（60 秒内退出 3 次）才放弃
+Write-Host '[SETUP] Watchdog enabled: the service auto-restarts if it dies.'
+& $py (Join-Path $root 'backend\watchdog.py')
 Log '[4/4] server exited'
