@@ -287,10 +287,20 @@ class JobService:
                 if not api.login(account.user, account.password):
                     logs.warn("任务", "[%s] 平台任务预检登录失败，照常执行脚本" % job.name)
                 else:
-                    done, desc = redeem.probe_task_done(api, keyword)
+                    done, desc, tasks = redeem.probe_task_done(api, keyword)
                     # 匹配用平台原名 keyword，展示用统一别名（「使用1小时」→「云电脑挂机」）
                     shown = redeem.display_task_name(keyword)
                     logs.info("任务", "[%s] 平台任务预检（关键词「%s」）：%s" % (job.name, shown, desc))
+                    # 顺手登记这份平台任务数据，供任务汇总判断「今日是否平台达标」。
+                    # 数据已经拉回来了，不再额外发请求；这样只要今天跑过一次任务，
+                    # 「已完成（平台达标）」就能正确显示（全量快照只在手动点
+                    # 「全量统计」时刷新，光靠它会导致徽章长期不亮）。
+                    try:
+                        import httpd
+                        httpd.record_platform_tasks(account.user, tasks)
+                    except Exception as rec_ex:
+                        logs.warn("任务", "[%s] 平台达标状态登记失败（不影响执行）：%s"
+                                  % (job.name, rec_ex))
                     if done is True:
                         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         record.success = True
