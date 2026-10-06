@@ -4,10 +4,18 @@ accounts.json
 accounts.json.bak
 # 会话 Cookie（登录凭证）
 ctyun_cookies_*.json
+# 登录态签名数据（含 userId/tenantId/secretKey）
+ctyun_authData_*.json
+# GitHub 推送辅助脚本（含访问令牌）
+_push_api.py
+_probe/
 # 设备码
 devices/
 .devicecode_*
 ctyun_restart_at
+# 运行实例 PID（数据目录/server.pid、watchdog.pid，运行时产物）
+server.pid
+watchdog.pid
 # 定时任务与历史（含手机号）
 jobs.json
 jobs.json.bak
@@ -20,6 +28,8 @@ redeem_config.json.bak
 # ===== 运行产物 =====
 logs/
 *.log
+# 平台任务达标快照（当日有效，运行期生成）
+platform_tasks_cache.json
 *.png
 *.jpg
 *.jpeg
