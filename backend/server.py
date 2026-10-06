@@ -8,7 +8,7 @@ CtYun-KeepAlive-Web —— Python 版入口（对应 C# Program.cs Main）。
   3. 后处理：展示名兜底、设备码解析、脚本目录校正、日志历史上限
   4. 后台循环：定时任务调度器（cron）+ 保活重启调度
   5. 自动启动已有账号保活（登录验证后启动）
-  6. Web 服务监听 0.0.0.0:PORT（默认 8080）
+  6. Web 服务监听 0.0.0.0:PORT（默认 8081，可用环境变量 PORT 覆盖）
 """
 import atexit
 import os
@@ -166,6 +166,12 @@ def _read_pidfile() -> int:
         return 0
 
 
+# 默认监听端口。之所以从 8080 改成 8081：本机有常驻的外部 node.exe 会抢占
+# 8080 的回环地址（127.0.0.1:8080），实测出现过两次（PID 9784、1968）。它只占
+# 回环、不占通配，于是「我们的服务绑得上 0.0.0.0:8080」但「用户打开
+# localhost:8080 却命中 node 的 401 页面」。改成 8081 直接避开。
+# 仍可用环境变量 PORT 覆盖；仍保留 PORT+1..PORT+10 的顺延兜底。
+DEFAULT_PORT = 8081
 PORT_FALLBACK_TRIES = 10   # 首选端口被占用时，向后顺延尝试 PORT+1 .. PORT+10
 
 
@@ -372,6 +378,7 @@ def main():
         account.device_code = httpd.resolve_device_code(account, Paths.data_dir)
     Paths.refresh_scripts_dir(cfg.scripts_dir)
     logs.Log.set_history_limit(cfg.log_history_size)
+    logs.set_retention_days(cfg.log_retention_days)
 
     # 4. 后台长循环（不使用任何框架 HostedService，直接线程承载）
     threading.Thread(target=jobs.CronScheduler.run_loop, args=(_stop_event,),
@@ -392,7 +399,7 @@ def main():
                          name="autostart", daemon=True).start()
 
     # 6. Web 服务
-    preferred = int(os.environ.get("PORT", "8080") or "8080")
+    preferred = int(os.environ.get("PORT", str(DEFAULT_PORT)) or str(DEFAULT_PORT))
 
     # 6.1 本服务实例已在运行 → 直接退出（pidfile 属于那个活着的实例，绝不删）
     old_pid = _read_pidfile()
