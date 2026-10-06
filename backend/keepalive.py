@@ -34,6 +34,21 @@ def backoff_seconds(fail_count: int) -> int:
     return ladder[idx]
 
 
+# ---- 心跳日志降噪 ----
+# 每账号每保活周期（默认 60 秒）固定 5 行心跳日志：新周期开始 / 连接已就绪 /
+# 周期时间到 / 收到保活校验 / 发送保活响应。4 个账号 ≈ 2.8 万行/天，把真正
+# 有价值的 WARN+ERROR（当天约 0.8%）彻底淹没。
+#
+# 降噪策略：**只有「打日志轮」打印完整心跳日志**，其余周期完全静默。
+#   打日志轮 = 首轮 / 异常恢复后的第一轮 / 之后每 N 轮一次（N 即下面的常量）。
+#   打日志轮末尾额外打一行汇总（连续成功轮数 + 累计成功重连次数 + 当前状态），
+#   用来证明服务还活着，而不是完全静默。
+# **异常路径（失败、重连、被踢、平台状态异常、会话重建、自动开机等）一条不少。**
+# 静默期间 metrics（heartbeatSuccess / lastHeartbeatAt）与前端状态照常更新，
+# 面板心跳计数不受影响，只是不再往日志和历史缓冲里灌。
+HEARTBEAT_LOG_EVERY_N_CYCLES = 10
+
+
 class KeepAliveSession:
     """单个账号的保活会话句柄。"""
 
@@ -348,6 +363,11 @@ class KeepAliveEngine:
         cycle_no = 0               # 周期计数
         real_status_failures = 0   # 平台真实状态连续异常计数
         poweron_waits = 0          # 因云电脑关机而等待开机的次数
+        # ---- 心跳日志降噪状态（详见 HEARTBEAT_LOG_EVERY_N_CYCLES 注释）----
+        cyc_verbose = False        # 本轮是否打印完整心跳日志
+        ok_since_log = 0           # 自上次打印汇总以来成功的完整周期数
+        total_ok_cycles = 0        # 累计成功的完整周期数（= 累计成功重连次数）
+        need_recovery_log = False  # 失败恢复后第一轮必须立即打印（不等攒够 N 轮）
 
         while not _cancelled(session):
             if session_deadline is not None and time.monotonic() >= session_deadline:
@@ -398,7 +418,13 @@ class KeepAliveEngine:
             cycle_end = time.monotonic() + keep_alive_seconds
             ws = WSClient()
             try:
-                logs.info(label, "[%s] === 新周期开始，尝试连接 ===" % code)
+                # 心跳日志降噪：只有「打日志轮」才打印连接过程。
+                #   打日志轮 = 首轮 / 异常恢复后的第一轮 / 之后每 N 轮一次；
+                #   其余周期完全静默（异常由下方 except 分支照旧逐条打印）。
+                cyc_verbose = (total_ok_cycles == 0 or need_recovery_log
+                               or ok_since_log >= HEARTBEAT_LOG_EVERY_N_CYCLES)
+                if cyc_verbose:
+                    logs.info(label, "[%s] === 新周期开始，尝试连接 ===" % code)
                 _update_desktop_status(key, code, "正在连接...")
                 ws.connect(uri, origin=origin, subprotocol="binary")
 
@@ -423,7 +449,13 @@ class KeepAliveEngine:
                     break
                 ws.send_binary(initial_payload)
 
-                logs.ok(label, "[%s] 连接已就绪，保持 %d 秒..." % (code, keep_alive_seconds))
+                # 首次连接成功、以及从失败恢复后的第一次成功 → 立即打印，
+                # 不让用户干等攒够 N 轮才看到「活了」；其余仅在打日志轮打印。
+                if cyc_verbose:
+                    logs.ok(label, "[%s] 连接已就绪%s，保持 %d 秒..."
+                            % (code, "（异常已恢复）" if need_recovery_log else "",
+                               keep_alive_seconds))
+                need_recovery_log = False
                 _update_desktop_status(key, code, "保活中")
                 # ★ 此处不再清零 consecutive_failures——桌面会话僵死时平台会
                 #   「接受 WS 握手后立即踢掉」，若握手成功即清零计数，则连续失败
@@ -432,12 +464,24 @@ class KeepAliveEngine:
                 #   只有完整撑过一个保活周期（WSTimeout 正常到期）才视为健康并清零。
 
                 try:
-                    KeepAliveEngine._receive_loop(session, ws, desktop, cycle_end)
+                    KeepAliveEngine._receive_loop(session, ws, desktop, cycle_end,
+                                                  verbose=cyc_verbose)
                     # recv 正常退出：连接被对端关闭或会话停止
                     if _cancelled(session):
                         break
+                    # 既非周期到期（WSTimeout）、也非主动停止：对端提前关闭连接。
+                    # 下一轮强制打日志，避免这种场景下周而复始地完全静默。
+                    need_recovery_log = True
                 except WSTimeout:
-                    logs.info(label, "[%s] 周期时间到，准备重连..." % code)
+                    ok_since_log += 1
+                    total_ok_cycles += 1
+                    if cyc_verbose:
+                        logs.info(label, "[%s] 周期时间到，准备重连..." % code)
+                        # 汇总行：静默期间也要留能证明「服务还活着」的证据
+                        logs.ok(label, "[%s] 心跳正常：连续 %d 轮成功"
+                                "（累计成功重连 %d 次，状态：保活中）"
+                                % (code, ok_since_log, total_ok_cycles))
+                        ok_since_log = 0
                     consecutive_failures = 0   # 完整撑过保活周期 = 健康
                     info_refreshes = 0
                     poweron_waits = 0          # 健康周期后重新获得开机自愈额度
@@ -447,6 +491,9 @@ class KeepAliveEngine:
                 if _cancelled(session) or isinstance(ex, WSClosed) and session.stop.is_set():
                     break
                 consecutive_failures += 1
+                # 失败计数不参与降噪；同时标记「下一轮成功要立即打印」，
+                # 保证从失败恢复的那一刻用户马上能看到（不攒够 N 轮才报）
+                need_recovery_log = True
 
                 # ★ 区分「平台主动断连」与「真实故障」：
                 #   Errno 10054 / 连接被重置 绝大多数是云电脑未开机或正在重置，
@@ -537,7 +584,12 @@ class KeepAliveEngine:
     # ---------- WebSocket 接收循环 ----------
 
     @staticmethod
-    def _receive_loop(session, ws, desktop, cycle_end):
+    def _receive_loop(session, ws, desktop, cycle_end, verbose: bool = False):
+        """收发循环直到周期结束。
+
+        verbose：本轮是否为「打日志轮」。False 时不打印保活校验/响应日志
+        （占日志总量大头），但 metrics 心跳计数照常累加，不影响面板显示。
+        """
         key = session.key
         label = session.display_name
         code = desktop.get("desktopCode", "")
@@ -552,10 +604,12 @@ class KeepAliveEngine:
                 continue
 
             if data[:4] == b"REDQ":
-                logs.ok(label, "[%s] -> 收到保活校验" % code)
+                if verbose:
+                    logs.ok(label, "[%s] -> 收到保活校验" % code)
                 response = encryptor.execute(data)
                 ws.send_binary(response)
-                logs.ok(label, "[%s] -> 发送保活响应成功" % code)
+                if verbose:
+                    logs.ok(label, "[%s] -> 发送保活响应成功" % code)
                 now = int(time.time())
 
                 def touch(m, now=now):
