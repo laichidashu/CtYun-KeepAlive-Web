@@ -23,13 +23,29 @@ _DEFAULT_HISTORY_SIZE = 500
 _SUB_QUEUE_SIZE = 256
 
 # ---- 本地文件持久化 ----
-# <数据目录>/logs/app-YYYY-MM-DD.log，按天滚动，默认保留 30 天
+# <数据目录>/logs/app-YYYY-MM-DD.log，按天滚动，默认保留 14 天（可用
+# logRetentionDays 配置覆盖；早期是写死的 30 天，logs/ 会堆到 55 MB+）
 _LEVEL_TAGS = {LEVEL_INFO: "INFO", LEVEL_SUCCESS: "OK", LEVEL_WARN: "WARN", LEVEL_ERROR: "ERROR"}
 _FILE_GATE = threading.Lock()
 _FILE_DIR = ""
 _FILE_DATE = ""
 _FILE_HANDLE = None
-_RETENTION_DAYS = 30
+_RETENTION_DAYS = 14
+
+
+def set_retention_days(days: int):
+    """设置日志文件保留天数（由配置 logRetentionDays 驱动，启动时调用一次）。
+
+    非法值（非正数、过大）一律回退到默认，避免误配成 0 把当天日志删掉。
+    """
+    global _RETENTION_DAYS
+    try:
+        n = int(days)
+    except Exception:
+        return
+    if n <= 0 or n > 3650:
+        return
+    _RETENTION_DAYS = n
 
 
 def format_line(source: str, message: str) -> str:
@@ -138,8 +154,12 @@ def set_file_dir(d: str):
     try:
         os.makedirs(d, exist_ok=True)
         _FILE_DIR = d
+        # 启动时先清一轮：清理原本只在「跨天重开句柄」那一刻触发，
+        # 服务若频繁重启就长时间碰不到，过期日志会一直堆着。
+        with _FILE_GATE:
+            _cleanup_old_logs()
     except Exception:
-        pass  # 目录创建失败则降级为仅内存+控制台
+        pass  # 目录创建失败则降级为仅内存+控制台输出
 
 
 def _cleanup_old_logs():
