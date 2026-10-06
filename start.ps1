@@ -11,7 +11,8 @@ function Log($msg) {
 }
 
 Write-Host '================================================'
-Write-Host ' CtYun KeepAlive  starting on http://localhost:8080'
+Write-Host ' CtYun KeepAlive  starting on http://localhost:8081'
+Write-Host ' (若 8081 被占用会自动顺延，实际端口见启动日志)'
 Write-Host ' Default password: admin   (change it in Settings)'
 Write-Host ' Press Ctrl+C to stop.'
 Write-Host '================================================'
