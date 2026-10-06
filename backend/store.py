@@ -101,6 +101,10 @@ class AppConfig:
         self.browser_mutex_mode = "Global"    # Global | PerType
         self.poll_interval_seconds = 5
         self.log_history_size = 500
+        # 日志文件本地保留天数（超过则删除最早的 app-YYYY-MM-DD.log）。
+        # 默认 14 天：单日约 3 MB（未降噪时），30 天会让 logs/ 堆到 55 MB+，
+        # 而排查通常只看最近一两周。
+        self.log_retention_days = 14
         self.feishu_webhook = ""              # 飞书自定义机器人 Webhook（空=关闭推送）
         self.feishu_secret = ""               # 飞书加签密钥（未加签留空）
         self.feishu_app_id = ""               # 飞书自建应用 App ID（与 webhook 二选一）
@@ -125,6 +129,7 @@ class AppConfig:
             "browserMutexMode": self.browser_mutex_mode,
             "pollIntervalSeconds": self.poll_interval_seconds,
             "logHistorySize": self.log_history_size,
+            "logRetentionDays": self.log_retention_days,
             "feishuWebhook": self.feishu_webhook,
             "feishuSecret": self.feishu_secret,
             "feishuAppId": self.feishu_app_id,
@@ -151,6 +156,7 @@ class AppConfig:
         cfg.browser_mutex_mode = d.get("browserMutexMode", "Global") or "Global"
         cfg.poll_interval_seconds = int(d.get("pollIntervalSeconds", 5))
         cfg.log_history_size = int(d.get("logHistorySize", 500))
+        cfg.log_retention_days = int(d.get("logRetentionDays", 14))
         cfg.feishu_webhook = d.get("feishuWebhook", "") or ""
         cfg.feishu_secret = d.get("feishuSecret", "") or ""
         cfg.feishu_app_id = d.get("feishuAppId", "") or ""
