@@ -158,7 +158,9 @@ class AppConfig:
         cfg.browser_mutex_mode = d.get("browserMutexMode", "PerAccount") or "PerAccount"
         cfg.poll_interval_seconds = int(d.get("pollIntervalSeconds", 5))
         cfg.log_history_size = int(d.get("logHistorySize", 500))
-        cfg.log_retention_days = int(d.get("logRetentionDays", 14))
+        # 用 `or 14` 而不是 d.get(.., 14)：前端可能回传 null / 空串，
+        # 此时键存在但值是 None，int(None) 会直接抛异常导致配置加载失败。
+        cfg.log_retention_days = int(d.get("logRetentionDays") or 14)
         cfg.feishu_webhook = d.get("feishuWebhook", "") or ""
         cfg.feishu_secret = d.get("feishuSecret", "") or ""
         cfg.feishu_app_id = d.get("feishuAppId", "") or ""
