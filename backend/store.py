@@ -98,7 +98,9 @@ class AppConfig:
         self.boot_wait_rounds = 3
         self.boot_wait_seconds_per_round = 60
         self.min_healthy_session_seconds = 60
-        self.browser_mutex_mode = "Global"    # Global | PerType
+        # 浏览器互斥粒度：Global（全局1把锁，并发度1）| PerType（按类型，并发度2）
+        # | PerAccount（按账号，不同账号并行、同账号串行，并发度=账号数，默认）
+        self.browser_mutex_mode = "PerAccount"
         self.poll_interval_seconds = 5
         self.log_history_size = 500
         # 日志文件本地保留天数（超过则删除最早的 app-YYYY-MM-DD.log）。
@@ -153,7 +155,7 @@ class AppConfig:
         cfg.boot_wait_rounds = int(d.get("bootWaitRounds", 3))
         cfg.boot_wait_seconds_per_round = int(d.get("bootWaitSecondsPerRound", 60))
         cfg.min_healthy_session_seconds = int(d.get("minHealthySessionSeconds", 60))
-        cfg.browser_mutex_mode = d.get("browserMutexMode", "Global") or "Global"
+        cfg.browser_mutex_mode = d.get("browserMutexMode", "PerAccount") or "PerAccount"
         cfg.poll_interval_seconds = int(d.get("pollIntervalSeconds", 5))
         cfg.log_history_size = int(d.get("logHistorySize", 500))
         cfg.log_retention_days = int(d.get("logRetentionDays", 14))
