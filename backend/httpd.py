@@ -1066,8 +1066,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._ok_web(success=False, msg=msg)
 
         # 浏览器互斥（非获取式探测）
-        if mutex.BrowserMutex.is_held(job.type):
-            return self._ok_web(success=False, msg=mutex.mutex_message())
+        # 必须带 account：PerAccount 模式下键就是账号，只传 job.type 会被当成
+        # 账号键去查（等价于拿类型当账号），与实际执行时 jobs.py 用的键不一致，
+        # 会出现「该账号明明空闲却被拒绝」的误判。
+        if mutex.BrowserMutex.is_held(job.type, account=job.account_user):
+            return self._ok_web(success=False,
+                                msg=mutex.mutex_message(job.type, job.account_user))
 
         # 异步执行，立即返回（C7）
         threading.Thread(target=_job_service().execute, args=(job, "manual"),
@@ -1093,7 +1097,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             import mutex
             # force=True：用户主动停止，无论锁当前登记持有者是谁都强制释放
-            mutex.BrowserMutex.release(job.type, force=True)
+            # account 必须带上，否则 PerAccount 下会释放到错误的键（拿类型当账号）。
+            mutex.BrowserMutex.release(job.type, force=True, account=job.account_user)
         except Exception:
             pass
         job.running = False
