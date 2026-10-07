@@ -1694,9 +1694,11 @@
         }
     }
 
-    /** 浏览器互斥范围键：Global 全局一把锁；PerType 按类型各一把（与后端 mutex.py 对应）。 */
+    /** 浏览器互斥范围键：Global 全局一把锁；PerType 按类型；PerAccount 按账号
+     *  （与后端 mutex.py 的 _key_for 保持一致）。 */
     function bannerScopeKey(job) {
-        var mode = (state.settings && state.settings.browserMutexMode) || 'Global';
+        var mode = (state.settings && state.settings.browserMutexMode) || 'PerAccount';
+        if (mode === 'PerAccount') { return 'account:' + (job.accountUser || ''); }
         return mode === 'PerType' ? 'type:' + (job.type || '') : 'global';
     }
 
@@ -2687,7 +2689,7 @@
         $('set-pcHangSeconds').value = num(s.pcHangSeconds, 4800);
         $('set-bootWaitRounds').value = num(s.bootWaitRounds, 3);
         $('set-bootWaitSecondsPerRound').value = num(s.bootWaitSecondsPerRound, 60);
-        $('set-browserMutexMode').value = s.browserMutexMode || 'Global';
+        $('set-browserMutexMode').value = s.browserMutexMode || 'PerAccount';
         $('set-pollIntervalSeconds').value = num(s.pollIntervalSeconds, DEFAULT_POLL_SECONDS);
         $('set-feishuWebhook').value = s.feishuWebhook || '';
         $('set-feishuSecret').value = s.feishuSecret || '';
@@ -2727,7 +2729,7 @@
             pcHangSeconds: parseIntOr($('set-pcHangSeconds').value, 4800),
             bootWaitRounds: parseIntOr($('set-bootWaitRounds').value, 3),
             bootWaitSecondsPerRound: parseIntOr($('set-bootWaitSecondsPerRound').value, 60),
-            browserMutexMode: $('set-browserMutexMode').value || 'Global',
+            browserMutexMode: $('set-browserMutexMode').value || 'PerAccount',
             pollIntervalSeconds: parseIntOr($('set-pollIntervalSeconds').value, DEFAULT_POLL_SECONDS),
             feishuWebhook: $('set-feishuWebhook').value.trim(),
             feishuSecret: $('set-feishuSecret').value.trim(),
