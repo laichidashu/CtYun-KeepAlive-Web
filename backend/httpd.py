@@ -1199,6 +1199,8 @@ class Handler(BaseHTTPRequestHandler):
             "bootWaitSecondsPerRound": cfg.boot_wait_seconds_per_round,
             "browserMutexMode": cfg.browser_mutex_mode,
             "pollIntervalSeconds": cfg.poll_interval_seconds,
+            "logRetentionDays": getattr(cfg, "log_retention_days", 14),
+            "logHistorySize": getattr(cfg, "log_history_size", 500),
             "feishuWebhook": getattr(cfg, "feishu_webhook", ""),
             "feishuSecret": getattr(cfg, "feishu_secret", ""),
             "feishuAppId": getattr(cfg, "feishu_app_id", ""),
@@ -1234,8 +1236,13 @@ class Handler(BaseHTTPRequestHandler):
         cfg.pc_hang_seconds = geti("pcHangSeconds", 4800)
         cfg.boot_wait_rounds = geti("bootWaitRounds", 3)
         cfg.boot_wait_seconds_per_round = geti("bootWaitSecondsPerRound", 60)
-        cfg.browser_mutex_mode = str(body.get("browserMutexMode", "Global") or "Global")
+        # 兜底用「当前值」而不是硬编码 "Global"：前者保证字段缺失时保持不变，
+        # 后者会在前端未回传该字段时（旧版页面缓存等）把用户的 PerAccount
+        # 静默打回 Global，等于刚配置的并行能力失效。
+        cfg.browser_mutex_mode = str(body.get("browserMutexMode")
+                                     or cfg.browser_mutex_mode or "PerAccount")
         cfg.poll_interval_seconds = geti("pollIntervalSeconds", 5)
+        cfg.log_retention_days = geti("logRetentionDays", cfg.log_retention_days)
         cfg.feishu_webhook = str(body.get("feishuWebhook", "") or "").strip()
         cfg.feishu_secret = str(body.get("feishuSecret", "") or "").strip()
         cfg.feishu_app_id = str(body.get("feishuAppId", "") or "").strip()
@@ -1248,6 +1255,12 @@ class Handler(BaseHTTPRequestHandler):
             Paths.refresh_scripts_dir(cfg.scripts_dir)
 
         ConfigStore.save(Paths.accounts_path, G.config.to_dict)
+        # 保留天数改了立即生效（否则要等下次重启才应用新的清理策略）
+        try:
+            import logs
+            logs.set_retention_days(cfg.log_retention_days)
+        except Exception:
+            pass
         return self._ok_web(success=True)
 
     def _ep_feishu_test(self):
