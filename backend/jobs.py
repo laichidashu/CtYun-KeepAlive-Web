@@ -327,7 +327,8 @@ class JobService:
             # run_token：本次运行的锁持有者令牌，finally 只释放自己持有的锁，
             # 避免「被停止强制释放后锁已被他人拿走，自己的 finally 又误放他人锁」。
             run_token = uuid.uuid4().hex
-            acquired = mutex.BrowserMutex.try_acquire(job.type, job.name, run_token)
+            acquired = mutex.BrowserMutex.try_acquire(job.type, job.name, run_token,
+                                                     account=job.account_user)
             if not acquired:
                 with cls._lock:
                     job.queued = True  # 前端「排队等待」横幅标记
@@ -343,14 +344,15 @@ class JobService:
                             still_enabled = job.enabled and job.running
                         if not still_enabled:
                             break
-                        if mutex.BrowserMutex.try_acquire(job.type, job.name, run_token):
+                        if mutex.BrowserMutex.try_acquire(job.type, job.name, run_token,
+                                                         account=job.account_user):
                             acquired = True
                             logs.info("任务", "[%s] 排队 %d 秒后获得浏览器使用权，开始执行"
                                       % (job.name, waited))
                             break
                 if not acquired:
                     record.success = False
-                    record.summary = mutex.mutex_message()
+                    record.summary = mutex.mutex_message(job.type, job.account_user)
                     record.ended_at = int(time.time())
                     job.last_result = "被互斥跳过"
                     with cls._lock:
@@ -419,7 +421,8 @@ class JobService:
                 import mutex
                 # 只释放本次运行持有的锁（令牌匹配）；若已被 stop 强制释放且
                 # 锁被别的任务拿走，这里会被拒绝，不会误放他人锁。
-                mutex.BrowserMutex.release(job.type, token=run_token)
+                mutex.BrowserMutex.release(job.type, token=run_token,
+                                          account=job.account_user)
             # 复位前端横幅所需的瞬时标记（execute 任何路径退出都会经过这里）
             try:
                 with cls._lock:
@@ -628,7 +631,13 @@ class JobService:
             # --- 2. 孤儿互斥锁回收 ---
             import mutex
             mode = store.G.config.browser_mutex_mode if store.G.config else "Global"
-            if mode == "PerType":
+            if mode == "PerAccount":
+                # 按账号加锁：只检查确实创建过的账号锁（避免为没跑过的账号造锁）
+                keys = mutex.BrowserMutex.all_keys()
+
+                def _holder_busy(key):
+                    return any(j.running and (j.account_user or "") == key for j in cls._jobs)
+            elif mode == "PerType":
                 keys = (JOB_TYPE_AI_CHAT, JOB_TYPE_PC_HANG)
 
                 def _holder_busy(key):
